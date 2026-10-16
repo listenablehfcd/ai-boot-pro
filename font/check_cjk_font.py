@@ -1,3 +1,6 @@
+# 本脚本（check_cjk_font.py）由 AI Boot Pro 项目编写，采用 MIT 许可证。
+# 注意：它生成的字体产物（aiboot-cjk.psf.gz）源自 GNU Unifont，
+#       按 GPL v2+ 分发，与本脚本的 MIT 许可相互独立。
 #!/usr/bin/env python3
 """Assert that the AI-Boot console font covers every character the UI prints.
 

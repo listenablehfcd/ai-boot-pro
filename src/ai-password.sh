@@ -1,4 +1,7 @@
 #!/bin/bash
+# AI Boot Pro —— 救援启动盘系统
+# Copyright (c) 2026 sxzxdpy  <https://github.com/listenablehfcd>
+# SPDX-License-Identifier: MIT
 # ============================================================
 # AI-Boot 5.2 密码模块
 #   - 用户名不再硬编码 "ai"，改用配置里的 ai_user

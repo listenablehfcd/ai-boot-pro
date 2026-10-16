@@ -1,0 +1,13 @@
+本目录下的 aiboot-cjk.psf.gz（控制台中文字体）不是 MIT 授权。
+============================================================
+
+它是从 GNU Unifont 生成的「修改版子集」（截取子集 + 转换为 PSF2 格式），
+按 GNU GPL v2 或更高版本分发（并附 GNU font embedding exception）。
+
+· 上游：GNU Unifont — https://unifoundry.com/unifont/
+· 上游许可证：https://unifoundry.com/LICENSE.txt
+· 对应的生成脚本、码点清单与复现步骤见仓库的 font/ 目录
+· 本仓库的原创代码（src/、etc/、其它 share/ 文件）为 MIT
+
+本镜像把该字体作为「功能性组件」随系统分发，因此不依赖字体嵌入例外，
+字体本身按 GPL v2+ 对待。详见仓库根目录的 THIRD-PARTY.md。

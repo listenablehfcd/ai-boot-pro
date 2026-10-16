@@ -1,4 +1,7 @@
 #!/bin/bash
+# AI Boot Pro —— 救援启动盘系统
+# Copyright (c) 2026 sxzxdpy  <https://github.com/listenablehfcd>
+# SPDX-License-Identifier: MIT
 # ============================================================
 # AI-Boot 5.2 主菜单
 #   统一交互约定：
@@ -62,9 +65,9 @@ draw_menu() {
 
     # 标题：中文模式列数少（40 列），长标题会被截断，所以按列数给两个长度
     if [ "$UI_COLS" = "2" ]; then
-        ui_line "AI-BOOT $AI_BOOT_VERSION   RESCUE / REMOTE"
+        ui_line "${AI_BOOT_PRODUCT:-AI Boot Pro} $AI_BOOT_VERSION   RESCUE / REMOTE"
     else
-        ui_line "AI-BOOT $AI_BOOT_VERSION   RESCUE / REMOTE SYSTEM"
+        ui_line "${AI_BOOT_PRODUCT:-AI Boot Pro} $AI_BOOT_VERSION   RESCUE / REMOTE SYSTEM"
     fi
     ui_rule
     ui_blank

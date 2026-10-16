@@ -19,7 +19,8 @@ if [ -n "${AI_BOOT_COMMON_LOADED:-}" ]; then
 fi
 AI_BOOT_COMMON_LOADED=1
 
-AI_BOOT_VERSION="Pro"
+AI_BOOT_VERSION="1.0"
+AI_BOOT_PRODUCT="AI Boot Pro"
 
 # ★ 必须显式设置 UTF-8 locale ★
 # systemd 服务不设 locale 时，bash 的 ${#var} 按**字节**计数（"中文字" = 9 而不是 3），

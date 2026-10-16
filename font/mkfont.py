@@ -1,3 +1,6 @@
+# 本脚本（mkfont.py）由 AI Boot Pro 项目编写，采用 MIT 许可证。
+# 注意：它生成的字体产物（aiboot-cjk.psf.gz）源自 GNU Unifont，
+#       按 GPL v2+ 分发，与本脚本的 MIT 许可相互独立。
 #!/usr/bin/env python3
 """Build the AI-Boot 512-glyph console font (415 CJK slots, stretched ASCII).
 

@@ -1,4 +1,7 @@
 #!/bin/bash
+# AI Boot Pro —— 救援启动盘系统
+# Copyright (c) 2026 sxzxdpy  <https://github.com/listenablehfcd>
+# SPDX-License-Identifier: MIT
 # ============================================================
 # AI 给现场操作者留言的入口（供 SSH 登录后的远程 AI 使用）
 #

@@ -1,4 +1,7 @@
 #!/bin/bash
+# AI Boot Pro —— 救援启动盘系统
+# Copyright (c) 2026 sxzxdpy  <https://github.com/listenablehfcd>
+# SPDX-License-Identifier: MIT
 # ============================================================
 # AI-Boot 5.2 SSH 模块
 #   - ssh_port / ssh_allow_root / ai_user 三个配置键在这里真正生效
