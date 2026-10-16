@@ -1,4 +1,7 @@
 #!/bin/bash
+# AI Boot Pro —— 救援启动盘系统
+# Copyright (c) 2026 sxzxdpy  <https://github.com/listenablehfcd>
+# SPDX-License-Identifier: MIT
 # ============================================================
 # AI-Boot 5.2 公共库
 #   - 统一按键层 read_key / read_choice  （ESC 永远是“返回上一级”）
