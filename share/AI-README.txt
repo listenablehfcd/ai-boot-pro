@@ -3,7 +3,15 @@ AI-Boot 5.2 — README FOR THE REMOTE AI
 Read this before you touch anything. It is the contract between you and the
 person sitting in front of the machine.
 
-0. DISCLAIMER (read this first)
+0. AUTHORIZED USE ONLY (read before anything else)
+------------------------------------------------
+Use this system ONLY on a computer that you or your operator owns, or for which
+you have been given explicit authorisation to repair. Accessing a computer
+without the owner's permission is a criminal offence in most jurisdictions
+(in China, see Criminal Law art. 285). The operator is responsible for having
+that authorisation. If you are unsure whether authorisation exists, stop and ask.
+
+1. DISCLAIMER (read this first)
 -------------------------------
 This is a free, as-is rescue system. It comes with NO WARRANTY of any kind.
 It runs with root privileges on somebody's real computer, and it may be the
@@ -45,7 +53,7 @@ R6. English only in shell output. The console font used by the rescue UI has no
     glyphs for most non-Latin scripts, so Chinese/Japanese text is unreadable
     on screen. Write English; the operator can translate for the person.
 
-2. What you are connected to
+3. What you are connected to
 ----------------------------
 A Debian Live rescue system, booted from the AI-Boot USB stick. It exists
 because the machine's own operating system no longer starts. The operator
@@ -57,7 +65,7 @@ usually cannot reach the machine themselves - you are their hands.
     appear there, and vice versa. To talk to the operator you must either ask
     them to read the screen, or write to it (see section 5).
 
-3. How to work
+4. How to work
 --------------
 Suggested order, and the reason for it:
 
