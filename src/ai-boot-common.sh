@@ -24,6 +24,7 @@ AI_BOOT_COMMON_LOADED=1
 
 AI_BOOT_VERSION="1.0"
 AI_BOOT_PRODUCT="AI Boot Pro"
+AI_BOOT_URL="https://github.com/listenablehfcd/ai-boot-pro"
 
 # ★ 必须显式设置 UTF-8 locale ★
 # systemd 服务不设 locale 时，bash 的 ${#var} 按**字节**计数（"中文字" = 9 而不是 3），
@@ -373,6 +374,25 @@ ui_cut() {
 }
 
 ui_rule()  { printf '+%s+\n' "$UI_RULE"; }
+# 输出项目地址。中文界面列数少（38 列），地址有 44 字符，直接输出会被截断成 "…b~"，
+# 所以在 "/" 处自动折行，保证两行都完整可见。不能用 ui_line 的自动截断。
+ui_project_url() {
+    local u="$AI_BOOT_URL" w="${UI_W:-72}"
+    if [ "${#u}" -le "$w" ]; then
+        ui_line "$u"
+        return 0
+    fi
+    local head="${u:0:$w}" tail
+    case "$head" in
+        */)  : ;;
+        */*) head="${head%/*}/" ;;
+    esac
+    tail="${u#"$head"}"
+    ui_line "$head"
+    [ -n "$tail" ] && ui_line "  $tail"
+    return 0
+}
+
 ui_blank() { printf '| %*s |\n' "$UI_W" ''; }
 
 ui_line() {

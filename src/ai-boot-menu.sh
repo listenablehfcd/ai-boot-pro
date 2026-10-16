@@ -117,6 +117,7 @@ draw_menu() {
     fi
     ui_rule
     ui_line "$AI_BOOT_COPYRIGHT"
+    ui_project_url
 }
 
 # ---------------- 退出 ----------------
