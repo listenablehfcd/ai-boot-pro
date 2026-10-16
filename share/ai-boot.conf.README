@@ -1,0 +1,95 @@
+# AI-Boot 5.2 配置文件逐项说明
+#
+# 位置（按优先级）：
+#   <U盘>/AI-Boot/ai-boot.conf     U 盘可写时用它（重启后还在）
+#   <U盘>/AI-Boot/ai-boot.conf     U 盘只读时只读它（改动不会保存）
+#   /run/ai-boot/ai-boot.conf      找不到 U 盘时的兜底（内存，重启即失）
+#
+# 格式：键=值，每行一个，# 开头是注释。值前后的空格会被去掉。
+# 改完不用重启，主菜单里换个界面再回来就会重读。
+#
+# 下面是每个键到底被谁用了。4.0 的问题就是这里有 20 个键，
+# 实际只有 wifi_ssid / wifi_password 两个有人读，其余全是摆设。
+
+auto_config=1
+#   急救模式第 1 步的总开关。
+#   0 = 第 1 步直接跳过（不读本文件联网）
+#   1 = 启用
+#   读它的地方：ai-rescue.sh phase1_config_network()
+
+auto_save=1
+#   改配置后是否自动写回本文件。
+#   0 = 只改内存，重启还原
+#   1 = 每次改动都落盘
+#   读它的地方：ai-boot-common.sh cfg_set()
+
+lang=en
+#   界面语言。en / zh。
+#   目前 zh 只翻主界面、按键提示和配置界面，子界面仍是英文
+#   （AI-README 明确要求日志用英文）。这是有意为之，不是漏翻。
+
+wifi_auto_connect=1
+#   急救第 1 步是否用下面的 wifi_ssid 自动联网。
+#   读它的地方：ai-rescue.sh phase1
+
+wifi_ssid=
+#   自动连接的 WiFi 名称。留空 = 第 1 步不试 WiFi。
+
+wifi_password=
+#   对应密码。留空 = 当作开放网络（key_mgmt=NONE）。
+#   密码里的 " 和 \ 会被自动转义，直接写原样即可。
+
+wired_dhcp=1
+#   是否尝试有线网卡 DHCP（急救第 1 步的第二步）。
+#   读它的地方：ai-network.sh net_up_wired_dhcp()
+
+static_ip=
+#   非空则改用静态地址，DHCP 不再执行。
+#   4.0 的 static_ip 只存在于文件里，没有任何代码读它，等于摆设。
+#   现在真的会执行 ip addr add / ip route add。
+#   例：192.168.0.50
+
+static_mask=
+#   支持两种写法：24 或 255.255.255.0。留空按 24 处理。
+#   读它的地方：ai-network.sh netmask_to_prefix()
+
+static_gateway=
+#   默认网关。例：192.168.0.1
+
+static_dns=
+#   写进 /etc/resolv.conf。例：223.5.5.5
+
+hotspot_enabled=1
+#   急救第 3 步：要不要让本机自己开热点。
+#   0 = 跳过第 3 步。
+
+hotspot_ssid=
+#   本机热点名称。留空 = 每次随机 8 位。
+
+hotspot_password=
+#   本机热点密码。留空 = 每次随机 12 位。
+
+ai_user=ai
+#   SSH 允许登录的用户名。
+#   同时决定：AllowUsers、chpasswd 改哪个用户、监视页杀哪个用户的会话。
+#   4.0 到处硬编码 "ai"。
+
+ai_stop_file=/root/.ai-ok
+#   停止标记文件。touch 它就表示“我干完了”。
+#   4.0 把它硬编码在 ai-rescue.sh 里，配置文件里的这个键没人读。
+
+ssh_port=22
+#   SSH 端口。会写进 /etc/ssh/sshd_config.d/aiboot.conf。
+#   读它的地方：ai-ssh.sh apply_sshd_config()
+
+ssh_allow_root=0
+#   0 = PermitRootLogin no（推荐，用 sudo su - 提权）
+#   1 = PermitRootLogin yes
+
+log_level=info
+#   info = 平时不在控制台刷日志；debug = 也打到控制台。
+#   读它的地方：ai-boot-common.sh log()
+
+log_save_usb=1
+#   是否把日志追加写到 <U盘>/AI-Boot/logs/ai-boot.log。
+#   0 = 只打控制台。

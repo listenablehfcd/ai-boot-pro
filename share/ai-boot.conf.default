@@ -1,0 +1,27 @@
+# AI-Boot 5.2 的静态默认值。
+# 这个文件在镜像里只是“说明书 + 兜底模板”：
+# 生成 ai-boot.conf 的代码在 /usr/local/bin/ai-boot-common.sh 的 cfg_write()。
+# 想改默认值就改那里，别只改这里。
+#
+# 每个键的作用见同目录的 ai-boot.conf.README
+
+auto_config=1
+auto_save=1
+lang=en
+wifi_auto_connect=1
+wifi_ssid=
+wifi_password=
+wired_dhcp=1
+static_ip=
+static_mask=
+static_gateway=
+static_dns=
+hotspot_enabled=1
+hotspot_ssid=
+hotspot_password=
+ai_user=ai
+ai_stop_file=/root/.ai-ok
+ssh_port=22
+ssh_allow_root=0
+log_level=info
+log_save_usb=1
