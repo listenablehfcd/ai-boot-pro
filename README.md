@@ -217,3 +217,19 @@ cp work/newiso/live/filesystem.squashfs base.squashfs
 [MIT](LICENSE)
 
 镜像中包含的 Debian 组件遵循其各自的许可证。
+
+---
+
+## 第三方组件与商标
+
+本仓库以 MIT 发布，但分发的镜像中包含第三方组件，其中一项需要特别说明：
+
+- **中文字体**（`share/aiboot-cjk.psf.gz`）是从 **GNU Unifont** 生成的子集，
+  遵循 **GPL v2+ 并附字体嵌入例外** —— 详见 [THIRD-PARTY.md](THIRD-PARTY.md)
+- **镜像中的 Debian 组件**遵循各自许可证，版权与许可证全文随镜像分发
+  （镜像内 `/usr/share/doc/<包名>/copyright`），源代码可从 Debian 官方镜像获取
+
+**商标**：`Windows`、`Windows PE`、`Microsoft` 是 Microsoft Corporation 的商标或注册商标，
+本项目仅在描述性语境下提及；`Debian` 是 Software in the Public Interest, Inc. 的注册商标；
+`Linux` 是 Linus Torvalds 的注册商标。本项目与上述组织**无隶属关系，亦未获其背书**。
+完整声明见 [THIRD-PARTY.md](THIRD-PARTY.md)。
