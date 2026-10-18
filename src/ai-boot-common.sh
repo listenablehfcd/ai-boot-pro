@@ -22,7 +22,7 @@ if [ -n "${AI_BOOT_COMMON_LOADED:-}" ]; then
 fi
 AI_BOOT_COMMON_LOADED=1
 
-AI_BOOT_VERSION="1.0"
+AI_BOOT_VERSION="1.1"
 AI_BOOT_PRODUCT="AI Boot Pro"
 AI_BOOT_URL="https://github.com/listenablehfcd/ai-boot-pro"
 

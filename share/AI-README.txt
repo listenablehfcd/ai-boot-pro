@@ -1,4 +1,4 @@
-AI Boot Pro 1.0 — README FOR THE REMOTE AI
+AI Boot Pro 1.1 — README FOR THE REMOTE AI
 =====================================
 Read this before you touch anything. It is the contract between you and the
 person sitting in front of the machine.
