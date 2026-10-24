@@ -128,42 +128,64 @@ cfg_show_howto() {
 # 选盘：列出所有可写的真实分区（设备名/卷标/剩余/挂载点），外加内存兜底
 cfg_pick_disk() {
     local -a devs mps labels frees rms
-    local line i c n
+    local line i c n tries=0
     while IFS='|' read -r dev mp label free rm; do
         [ -n "$mp" ] || continue
         devs+=("$dev"); mps+=("$mp"); labels+=("$label"); frees+=("$free"); rms+=("$rm")
     done < <(cfg_targets)
-
-    clear
-    ui_title "$(t cfg_pick_title)"
     n="${#mps[@]}"
-    for ((i = 0; i < n; i++)); do
-        ui_line "$(printf '%2d) %-11s %-12s %s %s %s' "$((i + 1))" "${devs[$i]}" "${labels[$i]:-$(t cfg_nolabel)}" "${rms[$i]:+[${rms[$i]}]}" "$(t cfg_free)" "${frees[$i]:--}")" 
-        ui_line "     $(t cfg_mount)${mps[$i]}"
+
+    # 真机实测 bug（2026-10-24）：上一步菜单按的"1"+回车里，回车还留在输入缓冲，
+    # 选择器一启动立刻读到这个回车 → case 不匹配 → return 1 → 闪一下回主菜单。
+    # 修法：① 显示前先把残留输入丢掉；② 给首键 30 秒超时（不再是无限等/被残留带走）；
+    #      ③ 任何非数字、非 ESC 的键都重绘本页，只有 ESC 才取消。
+    while true; do
+        # 丢掉缓冲区里残留的按键（最多 200 个，超时 50ms，不阻塞）
+        local _junk
+        while IFS= read -r -s -n 1 -t 0.05 _junk 2>/dev/null; do :; done
+
+        clear
+        ui_title "$(t cfg_pick_title)"
+        if [ "$n" -eq 0 ]; then
+            ui_line "$(t cfg_usb_none)"
+            ui_rule
+            ui_line "$(t cfg_pick_hint)"
+            printf '> '
+            c="$(read_choice 1 0.5 30)"
+            case "$c" in
+                ESC|EOF|CH:X|CH:x) return 1 ;;
+                *) continue ;;
+            esac
+        fi
+        for ((i = 0; i < n; i++)); do
+            ui_line "$(printf '%2d) %-11s %-12s %s %s %s' "$((i + 1))" "${devs[$i]}" "${labels[$i]:-$(t cfg_nolabel)}" "${rms[$i]:+[${rms[$i]}]}" "$(t cfg_free)" "${frees[$i]:--}")"
+            ui_line "     $(t cfg_mount)${mps[$i]}"
+        done
+        ui_line "$(printf '%2d) %s' "$((n + 1))" "$(t cfg_pick_mem)")"
+        ui_rule
+        ui_line "$(t cfg_pick_hint)"
+        printf '> '
+        c="$(read_choice "$((n + 1))" 0.5 30)"
+        case "$c" in
+            NUM:*)
+                i="${c#NUM:}"
+                if [ "$i" -ge 1 ] && [ "$i" -le "$n" ]; then
+                    ai_boot_set_dir "${mps[$((i - 1))]}/AI-Boot"
+                    CFG_WRITABLE=1; CFG_VOLATILE=0
+                    CFG_STATE="persistent"; CFG_STATE_REASON="manual"
+                    export CFG_STATE CFG_STATE_REASON
+                    return 0
+                elif [ "$i" -eq $((n + 1)) ]; then
+                    ai_boot_set_dir "/run/ai-boot"
+                    CFG_WRITABLE=1; CFG_VOLATILE=1
+                    CFG_STATE="memory"; CFG_STATE_REASON="manual_mem"
+                    export CFG_STATE CFG_STATE_REASON
+                    return 0
+                fi ;;
+            ESC|EOF|CH:X|CH:x) return 1 ;;
+            TIMEOUT|*) tries=$((tries + 1)); [ "$tries" -ge 999 ] && return 1; continue ;;
+        esac
     done
-    ui_line "$(printf '%2d) %s' "$((n + 1))" "$(t cfg_pick_mem)")"
-    ui_rule
-    ui_line "$(t cfg_pick_hint)"
-    printf '> '
-    c="$(read_choice "$((n + 1))")"
-    case "$c" in
-        NUM:*)
-            i="${c#NUM:}"
-            if [ "$i" -ge 1 ] && [ "$i" -le "$n" ]; then
-                ai_boot_set_dir "${mps[$((i - 1))]}/AI-Boot"
-                CFG_WRITABLE=1; CFG_VOLATILE=0
-                CFG_STATE="persistent"; CFG_STATE_REASON="manual"
-                export CFG_STATE CFG_STATE_REASON
-                return 0
-            elif [ "$i" -eq $((n + 1)) ]; then
-                ai_boot_set_dir "/run/ai-boot"
-                CFG_WRITABLE=1; CFG_VOLATILE=1
-                CFG_STATE="memory"; CFG_STATE_REASON="manual_mem"
-                export CFG_STATE CFG_STATE_REASON
-                return 0
-            fi ;;
-    esac
-    return 1
 }
 
 # 只读位置的逃逸口（审计修复 C）：把当前内存里的配置另存到用户挑的可写磁盘。

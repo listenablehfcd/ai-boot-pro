@@ -110,6 +110,9 @@ draw_menu() {
     else
         ui_line "$(ui_pad "$(t menu_c)" 18)$(ui_pad "$(t menu_d)" 24)$(t menu_e)"
     fi
+    # 语言切换必须留在主菜单一级：看不懂当前语言的人靠它逃出去，
+    # 埋进二级菜单等于把唯一的出路藏起来（用户 2026-10-24 反馈找不到）。
+    ui_line "$(t menu_l)"
     # 配置位置三态恒显：持久 / 只读 / 仅内存（重启会丢），绝不假装持久
     ui_line "$(cfg_status_text)"
     ui_blank
@@ -226,6 +229,9 @@ handle_choice() {
         CH:C|CH:c) /usr/local/bin/ai-config.sh --menu ;;
         CH:D|CH:d) /usr/local/bin/ai-config.sh --usb ;;
         CH:E|CH:e) other_page ;;
+        CH:L|CH:l) /usr/local/bin/ai-config.sh --language
+                   reload_language
+                   console_font_init 1 ;;
         *) return 0 ;;
     esac
     return 0

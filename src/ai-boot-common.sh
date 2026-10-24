@@ -22,7 +22,7 @@ if [ -n "${AI_BOOT_COMMON_LOADED:-}" ]; then
 fi
 AI_BOOT_COMMON_LOADED=1
 
-AI_BOOT_VERSION="1.5"
+AI_BOOT_VERSION="2.0"
 AI_BOOT_PRODUCT="AI Boot Pro"
 AI_BOOT_URL="https://github.com/listenablehfcd/ai-boot-pro"
 
@@ -892,6 +892,10 @@ ai_boot_set_dir() {
 cfg_targets() {
     local dev mp fstype rest label free rm base devname
     local usb="" other=""
+    # 真机实测 bug（2026-10-24）：用户插着 U 盘进"选择保存位置"，列表却是空的
+    # → 因为本函数只扫描【已经挂载】的分区，而镜像里没有任何 automount。
+    # 修法：先把可移动分区挂上（镜像里没有 udisks/gvfs，必须自己挂）。
+    command -v cfg_automount >/dev/null 2>&1 && cfg_automount
     while read -r dev mp fstype rest; do
         case "$dev" in /dev/*) ;; *) continue ;; esac
         case "$fstype" in
@@ -1345,6 +1349,7 @@ t() {
             menu_c)          echo "C. Config ..." ;;
             menu_d)          echo "D. USB ..." ;;
             menu_e)          echo "E. Other ..." ;;
+            menu_l)          echo "L. Language" ;;
             menu_1)          echo "1. SSH" ;;
             menu_2)          echo "2. WiFi / Refresh" ;;
             menu_3)          echo "3. Password file" ;;
@@ -1878,6 +1883,7 @@ t() {
         menu_c)          echo "C. 配置 ..." ;;
         menu_d)          echo "D. U 盘 ..." ;;
         menu_e)          echo "E. 其它 ..." ;;
+        menu_l)          echo "L. 语言" ;;
         menu_1)          echo "1. SSH" ;;
         menu_2)          echo "2. WiFi / 刷新" ;;
         menu_3)          echo "3. 密码文件" ;;

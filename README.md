@@ -2,6 +2,8 @@
 
 > 把 U 盘插到开不了机的电脑上，让远程的人或 AI 接进来。
 
+**当前版本：2.0** ｜ 镜像 `AI-Boot-Pro-2.0-20261024-amd64.iso`（2.15 GiB）
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-BIOS%20%7C%20UEFI-lightgrey.svg)](#运行要求)
 [![Base](https://img.shields.io/badge/base-Debian%20Live%2013-red.svg)](https://www.debian.org/)
@@ -61,8 +63,8 @@ AI Boot Pro 是一个基于 **Debian Live 13** 构建的救援启动盘系统。
 在故障机器上稳定性不佳。AI Boot Pro 运行完整的 Linux 环境，可直接读写 NTFS、ext4、
 XFS、Btrfs 等文件系统，也不受原系统状态影响。
 
-**老旧机器。** 完整版镜像约 2 GB，Slim 版小于 2 GB；系统启动后不需要图形界面，
-内存占用低。在只有 1 GB 内存、老式 CPU 的机器上同样可用。
+**老旧机器。** 镜像约 2.15 GB；系统启动后不需要图形界面，内存占用低，
+在内存较小的老机器上同样可用。
 
 ---
 
@@ -80,38 +82,27 @@ XFS、Btrfs 等文件系统，也不受原系统状态影响。
 系统在以下情况仍可运行：原系统盘完全损坏、无操作系统、无网络驱动、显卡驱动异常。
 
 ---
+## 下载
 
----
+本版镜像 **2.15 GiB**，超过 GitHub Release 单文件 2 GiB 的上限，因此**通过 123 云盘分发**。
 
-## 下载（重要）
-
-本版镜像 **2.15 GiB**，超过 GitHub Release 单文件 2 GiB 的上限，因此**通过网盘分发**：
-
-> **下载链接：（用户填入 123 云盘分享链接）**
+> **下载链接（需登录 123 云盘账号，不是免登录直链）：**
 >
-> 文件名：`AI-Boot-1.3-20261024-amd64.iso`
+> <https://1856983545.share.123pan.cn/123pan/2xU0vd-ccfqd?pwd=1rll>
+>
+> 文件名：`AI-Boot-Pro-2.0-20261024-amd64.iso`
 > 大小：2,308,472,832 字节（2.15 GiB）
-> **MD5：44ac06119a3c42555fed7cb87c778b3e**
-> 下载后请核对 MD5；不一致请重新下载。
+> **MD5：`31219a952e65e11940477c0078c3563f`**
+>
+> 下载后请核对 MD5，不一致请重新下载。
 
-下载后写入 U 盘（会清空该 U 盘）：
+### 写入 U 盘（会清空该 U 盘）
 
 ```bash
-sudo dd if=AI-Boot-1.3-20261024-amd64.iso of=/dev/sdX bs=4M status=progress oflag=sync
+sudo dd if=AI-Boot-Pro-2.0-20261024-amd64.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
-或用 Rufus / balenaEtcher / Ventoy。本镜像已含 hybrid MBR，
-**dd/Etcher 写入后 BIOS 与 UEFI 机器都能引导**（已实测）。
-使用 Ventoy 时请把 ISO 放在数据分区，BIOS 机器建议选「Boot in normal mode」。
-
-## 下载与写入
-
-
-**GitHub 访问不便时**，可使用备用下载（123 云盘，免登录，分享的正是本镜像）：
-
-<https://1856983545.share.123pan.cn/123pan/2xU0vd-F33yd?pwd=AiAr>
-
-Releases 提供 Slim 版镜像（小于 2 GB，**单个完整文件**，下载后可直接写入）。
+或用 Rufus / balenaEtcher / Ventoy：
 
 | 写入工具 | 平台 |
 |---|---|
@@ -120,16 +111,15 @@ Releases 提供 Slim 版镜像（小于 2 GB，**单个完整文件**，下载�
 | [Ventoy](https://www.ventoy.net/) | 跨平台，支持多 ISO 共存 |
 | `dd` | Linux / macOS |
 
-```bash
-sudo dd if=AI-Boot-Pro-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
-```
+> `of=` 必须指向**整块设备**（`/dev/sdb`），不能是分区（`/dev/sdb1`）。
+> 写错目标盘会直接、永久破坏其上的数据。
 
-> `of=` 必须指向整块设备（`/dev/sdb`），不能是分区（`/dev/sdb1`）。写错目标盘会直接
-> 破坏其上的数据，且无法撤销。
+本镜像含 **hybrid MBR**，dd/Etcher 写入后 **BIOS 与 UEFI 机器都能引导**（已实测）。
+使用 Ventoy 时请把 ISO 放在数据分区；BIOS 机器如遇引导失败，建议选「Boot in normal mode」。
 
-写入前建议核对 MD5，正确值列于对应 Release 的说明中。
-
----
+> ⚠️ **配置持久化需要可写介质**：dd 写入的启动盘本身是只读 ISO，配置存不进去。
+> 想保存配置，需要另外一只可写 U 盘（或 Ventoy 数据分区 / Debian persistence 分区）。
+> 界面上会如实显示当前是「持久 / 只读 / 仅内存（重启会丢）」。
 
 ## 使用
 

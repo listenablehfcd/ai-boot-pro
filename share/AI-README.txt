@@ -1,4 +1,4 @@
-AI Boot Pro 1.5 — README FOR THE REMOTE AI
+AI Boot Pro 2.0 — README FOR THE REMOTE AI
 =====================================
 Read this before you touch anything. It is the contract between you and the
 person sitting in front of the machine.
@@ -137,4 +137,4 @@ somewhere safe and to explain what happened. Copying data OUT (to the USB
 stick or over the network) is always safer than "fixing" the original.
 Before any copy, check the destination has room: df -h.
 
--- AI Boot Pro 1.5
+-- AI Boot Pro 2.0
