@@ -88,7 +88,7 @@ XFS、Btrfs 等文件系统，也不受原系统状态影响。
 
 > **下载链接（需登录 123 云盘账号，不是免登录直链）：**
 >
-> <https://1856983545.share.123pan.cn/123pan/2xU0vd-ccfqd?pwd=1rll>
+> <https://1856983545.share.123pan.cn/123pan/2xU0vd-MdZqd?pwd=icUj#>
 >
 > 文件名：`AI-Boot-Pro-2.0-20261024-amd64.iso`
 > 大小：2,308,472,832 字节（2.15 GiB）
