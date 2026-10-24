@@ -8,6 +8,12 @@
 #     ESC / X  = 返回上一级（在主菜单按 = 退出到命令行，并保证不会卡死在黑屏）
 #     数字     = 直接选择
 #     ENTER    = 确认 / 重绘
+#
+# 设置栏改版（真机反馈“设置页面乱成什么样了，我自己都迷糊”）：
+#   9 项平铺（C/D/E/F/G/H/L/R/S）→ 3 个分组入口 + 1 行配置位置：
+#     C. Config ...（查看/修改/默认值）  D. USB ...（位置/保存/选盘）
+#     E. Other ...（语言/帮助/重启关机）
+#   重启/关机/直接编辑文件都不再出现在顶级菜单，必须进二级页并二次确认。
 # ============================================================
 set -u
 source /usr/local/bin/ai-boot-common.sh
@@ -43,7 +49,7 @@ command -v ensure_system_ready >/dev/null 2>&1 && ensure_system_ready
 draw_menu() {
     # 注意：进位变量不能叫 t —— 那会和翻译函数 t() 撞名，
     # 一旦被 shadow，$(t menu_countdown) 就会去执行一个数字。
-    local secs="$1" row tens ones lt lo c1
+    local secs="$1" row tens ones lt lo c1 aw
     clear
     ui_rule
 
@@ -59,7 +65,10 @@ draw_menu() {
                 ui_line "$(printf '%s%s' "$(ui_pad '' $((UI_W - 12)))" "$lt $lo")"
             fi
         done
-        ui_line "$(printf '%s%s' "$(ui_pad '' $((UI_W - 22)))" "$(t menu_anykey)")"
+        # 提示语宽度要**实测**再补空格：原来写死 -22，而
+        # "press any key to cancel" 是 23 列 → 每帧都被截成 "canc~"（真机截断问题）。
+        aw="$(disp_width "$(t menu_anykey)")"
+        ui_line "$(printf '%s%s' "$(ui_pad '' $((UI_W - aw)))" "$(t menu_anykey)")"
         ui_rule
     fi
 
@@ -93,28 +102,20 @@ draw_menu() {
         ui_line "$(ui_pad "$(t menu_7)" 18)$(ui_pad "$(t menu_8)" 24)"
     fi
     ui_blank
-    # ---- 3. 设置 ----
+    # ---- 3. 设置：3 个分组入口（原来的 9 项平铺全部下沉到二级页）----
     ui_line "$(t menu_settings)"
     if [ "$UI_COLS" = "2" ]; then
         ui_line "$(ui_pad "$(t menu_c)" $c1)$(t menu_d)"
-        ui_line "$(ui_pad "$(t menu_e)" $c1)$(t menu_f)"
-        ui_line "$(ui_pad "$(t menu_g)" $c1)$(t menu_h)"
-        ui_line "$(ui_pad "$(t menu_l)" $c1)$(t menu_r)"
-        ui_line "$(t menu_s)"
+        ui_line "$(t menu_e)"
     else
         ui_line "$(ui_pad "$(t menu_c)" 18)$(ui_pad "$(t menu_d)" 24)$(t menu_e)"
-        ui_line "$(ui_pad "$(t menu_f)" 18)$(ui_pad "$(t menu_g)" 24)$(t menu_h)"
-        ui_line "$(ui_pad "$(t menu_l)" 18)$(ui_pad "$(t menu_r)" 24)$(t menu_s)"
     fi
+    # 配置位置三态恒显：持久 / 只读 / 仅内存（重启会丢），绝不假装持久
+    ui_line "$(cfg_status_text)"
     ui_blank
     ui_rule
     ui_line "$(t menu_nav1)"
     ui_line "$(t menu_nav2)"
-    if [ "$CFG_WRITABLE" != "1" ]; then
-        ui_line "$(t menu_readonly) $CONFIG_FILE"
-    elif [ "$CFG_VOLATILE" = "1" ]; then
-        ui_line "$(t menu_volatile)"
-    fi
     ui_rule
     ui_line "$AI_BOOT_COPYRIGHT"
     ui_project_url
@@ -142,6 +143,69 @@ exit_to_shell() {
     exec /bin/bash -c '/bin/bash -l; exec /usr/local/bin/ai-boot-menu.sh'
 }
 
+# ---------------- E. Other：语言 / 帮助 / 重启关机 ----------------
+# 连续两次 Y 才执行：重启/关机会让远程专家掉线，误按一次是灾难
+double_confirm() {
+    confirm "$1" || return 1
+    confirm "$(t confirm_again)" || return 1
+    return 0
+}
+
+power_page() {
+    local c
+    while true; do
+        clear
+        ui_title "$(t other_power)"
+        ui_line "$(t other_reboot)"
+        ui_line "$(t other_shutdown)"
+        ui_nav
+        printf '> '
+        c="$(read_choice 2)"
+        case "$c" in
+            NUM:1)
+                if double_confirm "$(t menu_confirm_reboot)"; then
+                    clear
+                    reboot 2>/dev/null || true
+                fi
+                ;;
+            NUM:2)
+                if double_confirm "$(t menu_confirm_shutdown)"; then
+                    clear
+                    poweroff 2>/dev/null || true
+                fi
+                ;;
+            ESC|EOF|CH:X|CH:x) return 0 ;;
+            *) : ;;
+        esac
+    done
+}
+
+other_page() {
+    local c
+    while true; do
+        clear
+        ui_title "$(t title_other)"
+        ui_line "$(t other_lang)"
+        ui_line "$(t other_help)"
+        ui_line "$(t other_power)"
+        ui_nav
+        printf '> '
+        c="$(read_choice 3)"
+        case "$c" in
+            NUM:1)
+                # 语言页改的是文件，本进程要立刻重读+换字体，否则看起来没反应
+                /usr/local/bin/ai-config.sh --language
+                reload_language
+                console_font_init 1
+                ;;
+            NUM:2) /usr/local/bin/ai-help.sh ;;
+            NUM:3) power_page ;;
+            ESC|EOF|CH:X|CH:x) return 0 ;;
+            *) : ;;
+        esac
+    done
+}
+
 # ---------------- 分支 ----------------
 handle_choice() {
     local c="$1"
@@ -158,15 +222,10 @@ handle_choice() {
         NUM:8)  /usr/local/bin/ai-tools.sh --check ;;
         CH:A|CH:a) /usr/local/bin/ai-rescue.sh ;;
         CH:B|CH:b) /usr/local/bin/ai-guided.sh ;;
-        CH:C|CH:c) /usr/local/bin/ai-config.sh --auto-config ;;
-        CH:D|CH:d) /usr/local/bin/ai-config.sh --auto-save ;;
-        CH:E|CH:e) /usr/local/bin/ai-config.sh --edit ;;
-        CH:F|CH:f) /usr/local/bin/ai-config.sh --default ;;
-        CH:G|CH:g) /usr/local/bin/ai-config.sh --usb-file ;;
-        CH:L|CH:l) /usr/local/bin/ai-config.sh --language ;;
-        CH:H|CH:h) /usr/local/bin/ai-help.sh ;;
-        CH:R|CH:r) if confirm "$(t menu_confirm_reboot)"; then reboot; fi ;;
-        CH:S|CH:s) if confirm "$(t menu_confirm_shutdown)"; then poweroff; fi ;;
+        # 设置栏只剩 3 个分组入口（危险动作/编辑器都在二级页里）
+        CH:C|CH:c) /usr/local/bin/ai-config.sh --menu ;;
+        CH:D|CH:d) /usr/local/bin/ai-config.sh --usb ;;
+        CH:E|CH:e) other_page ;;
         *) return 0 ;;
     esac
     return 0
@@ -174,11 +233,11 @@ handle_choice() {
 
 run_menu() {
     local secs="$AUTO_RESCUE_SECONDS"
-    local c="" cc=0 last_c=0 now
+    local c=""
 
     while true; do
         draw_menu "$secs"
-        c="$(read_choice 9 "$KEY_FOLLOW" 1)"
+        c="$(read_choice 8 "$KEY_FOLLOW" 1)"
 
         case "$c" in
             TIMEOUT)
@@ -211,31 +270,14 @@ run_menu() {
 
         secs=-1
 
-        # C x5 = 切换语言（沿用 4.0 的隐藏快捷键）
-        if [ "$c" = "CH:C" ] || [ "$c" = "CH:c" ]; then
-            now="$(date +%s)"
-            if [ $((now - last_c)) -le 2 ]; then
-                cc=$((cc + 1))
-            else
-                cc=1
-            fi
-            last_c="$now"
-            if [ "$cc" -ge 5 ]; then
-                cc=0
-                /usr/local/bin/ai-config.sh --language
-                continue
-            fi
-        else
-            cc=0
-        fi
-
         case "$c" in
             CH:*) handle_choice "$c" ;;
             NUM:*) handle_choice "$c" ;;
             *)    : ;;
         esac
-        # 子界面（尤其是语言页）改的是配置文件，主菜单必须重读一次，
-        # 否则界面永远停在旧语言 —— 这就是"选了中文主界面还是英文"。
+        # 子界面可能改了语言、也可能在 D 页把配置存到了另一只 U 盘。
+        # 回来后必须重新探测位置 + 重读配置，否则 footer 的三态永远停在旧值。
+        cfg_refresh_location load 2>/dev/null || true
         reload_language
         console_font_init 1
     done

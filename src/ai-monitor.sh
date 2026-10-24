@@ -207,6 +207,13 @@ run_monitor() {
                 ui_title "$(t mon_shell_title)"
                 ui_line "$(t mon_shell_hint)"
                 ui_rule
+                # 真机实测第 4 条（进调试 shell 后没有 /mnt）：进 shell 前补齐
+                # 标准目录并打印纯 ASCII 环境说明。实现放在 ai-shell.sh 里，
+                # 这里复用，保证"监视页 C 键"与"本地指引页 5 键"看到同一套信息。
+                if [ -r /usr/local/bin/ai-shell.sh ]; then
+                    source /usr/local/bin/ai-shell.sh
+                fi
+                command -v ai_shell_env_prepare >/dev/null 2>&1 && ai_shell_env_prepare
                 /bin/bash -l || true
                 press_any_key "$(t press_any)" || return 0
                 ;;

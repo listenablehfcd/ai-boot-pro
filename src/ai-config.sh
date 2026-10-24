@@ -96,8 +96,12 @@ cfg_source_line() {
 cfg_show_howto() {
     clear
     ui_title "$(t cfg_where_title)"
-    ui_line "$(t cfg_path)$CONFIG_FILE"
+    ui_line "$(t cfg_path)$(ui_cut "$CONFIG_FILE" 24)"
     ui_line "$(t cfg_source)$(cfg_source_line)"
+    # 自动扫描到 U 盘上的配置并加载成功时，把真实来源路径也显示出来
+    if [ -n "${CFG_LOADED_FROM:-}" ]; then
+        ui_line "$(t cfg_loaded_from)$(ui_cut "$CFG_LOADED_FROM" 16)"
+    fi
     if [ "$CFG_WRITABLE" = "1" ]; then
         ui_line "$(t cfg_writable_yes)"
     else
@@ -148,10 +152,14 @@ cfg_pick_disk() {
             if [ "$i" -ge 1 ] && [ "$i" -le "$n" ]; then
                 ai_boot_set_dir "${mps[$((i - 1))]}/AI-Boot"
                 CFG_WRITABLE=1; CFG_VOLATILE=0
+                CFG_STATE="persistent"; CFG_STATE_REASON="manual"
+                export CFG_STATE CFG_STATE_REASON
                 return 0
             elif [ "$i" -eq $((n + 1)) ]; then
                 ai_boot_set_dir "/run/ai-boot"
                 CFG_WRITABLE=1; CFG_VOLATILE=1
+                CFG_STATE="memory"; CFG_STATE_REASON="manual_mem"
+                export CFG_STATE CFG_STATE_REASON
                 return 0
             fi ;;
     esac
@@ -167,6 +175,7 @@ cfg_pick_disk() {
 # 立刻恢复，不把本次会话的全局状态改坏（否则后续编辑会写到别处，很难解释）。
 cfg_save_to_writable() {
     local orig_dir="$AI_BOOT_DIR" orig_wr="$CFG_WRITABLE" orig_vol="$CFG_VOLATILE"
+    local orig_state="$CFG_STATE" orig_reason="$CFG_STATE_REASON"
     local dest rc=1
     if ! cfg_pick_disk; then
         echo "$(t cfg_pick_cancel)"
@@ -188,8 +197,200 @@ cfg_save_to_writable() {
     ai_boot_set_dir "$orig_dir"
     CFG_WRITABLE="$orig_wr"
     CFG_VOLATILE="$orig_vol"
+    CFG_STATE="$orig_state"; CFG_STATE_REASON="$orig_reason"
+    export CFG_STATE CFG_STATE_REASON
     sleep 2
     return "$rc"
+}
+
+# ---- 位置三态（持久 / 只读 / 仅内存）如实显示 ----
+# 路径一律用 ui_cut 按当前列宽截断：中文只有 38 列，直接拼完整路径会
+# 变成“半句+~”，用户以为界面坏了（真机反馈）。
+show_location_block() {
+    ui_line "$(t cfg_location_label)$(cfg_status_label)"
+    ui_line "$(t cfg_path)$(ui_cut "$CONFIG_FILE" 24)"
+}
+
+# -------- D. U 盘页：保存到 U 盘 / 选择 U 盘位置 --------
+# “保存到 U 盘”是一个明确动作：有可写盘就立即写并显示真实路径；
+# 没有可写盘就明说“请接上可写 U 盘”，绝不假装成功（真机第 2/5 条）。
+cfg_save_to_usb() {
+    local mp dir
+    # 当前已经是可写持久位置：直接写回原文件即可
+    if [ "$CFG_WRITABLE" = "1" ] && [ "$CFG_VOLATILE" != "1" ]; then
+        if cfg_write; then
+            echo "$(t cfg_written)$CONFIG_FILE"
+            log "config written: $CONFIG_FILE"
+            return 0
+        fi
+        echo "$(t cfg_write_fail)"
+        log "config write FAILED: $CONFIG_FILE"
+        return 1
+    fi
+    # 现场插拔后重新扫描（进页面前才插上的 U 盘，这里必须再挂一次）
+    command -v cfg_automount >/dev/null 2>&1 && cfg_automount >/dev/null 2>&1 || true
+    mp="$(cfg_writable_mount 2>/dev/null || true)"
+    if [ -z "$mp" ]; then
+        echo "$(t cfg_usb_none)"
+        sleep 2
+        return 1
+    fi
+    dir="$mp/AI-Boot"
+    mkdir -p "$dir" 2>/dev/null || { echo "$(t cfg_write_fail)"; sleep 2; return 1; }
+    ai_boot_set_dir "$dir"
+    USB_ROOT="$mp"
+    CFG_WRITABLE=1; CFG_VOLATILE=0
+    CFG_STATE="persistent"; CFG_STATE_REASON="usb"
+    export CFG_STATE CFG_STATE_REASON
+    if cfg_write; then
+        echo "$(t cfg_written)$CONFIG_FILE"
+        log "config written: $CONFIG_FILE"
+        sleep 1
+        return 0
+    fi
+    echo "$(t cfg_write_fail)"
+    log "config write FAILED: $CONFIG_FILE"
+    sleep 2
+    return 1
+}
+
+# 选择 U 盘位置：选完立刻把当前配置写过去（否则用户以为“选了就存了”）
+cfg_choose_location() {
+    command -v cfg_automount >/dev/null 2>&1 && cfg_automount >/dev/null 2>&1 || true
+    if ! cfg_pick_disk; then
+        echo "$(t cfg_pick_cancel)"
+        sleep 2
+        return 1
+    fi
+    mkdir -p "$AI_BOOT_DIR" 2>/dev/null || { echo "$(t cfg_create_fail)"; sleep 2; return 1; }
+    if cfg_write; then
+        echo "$(t cfg_written)$CONFIG_FILE"
+        log "config location chosen: $CONFIG_FILE"
+        sleep 1
+        return 0
+    fi
+    echo "$(t cfg_write_fail)"
+    sleep 2
+    return 1
+}
+
+usb_menu() {
+    local c
+    while true; do
+        clear
+        ui_title "$(t title_usb)"
+        show_location_block
+        ui_rule
+        ui_line "$(t cfg_usb_save)"
+        ui_line "$(t cfg_usb_choose)"
+        ui_nav
+        printf '> '
+        c="$(read_choice 2)"
+        case "$c" in
+            NUM:1) cfg_save_to_usb || true ;;
+            NUM:2) cfg_choose_location || true ;;
+            ESC|EOF|CH:X|CH:x) return 0 ;;
+            *) : ;;
+        esac
+    done
+}
+
+# -------- C. Config 页：查看 / 修改 / 默认值 --------
+config_menu() {
+    local c
+    while true; do
+        clear
+        ui_title "$(t title_config)"
+        show_location_block
+        ui_rule
+        ui_line "$(t cfg_menu_view)"
+        ui_line "$(t cfg_menu_edit)"
+        ui_line "$(t cfg_menu_defaults)"
+        ui_nav
+        printf '> '
+        c="$(read_choice 3)"
+        case "$c" in
+            NUM:1) show_current_config ;;
+            NUM:2) config_edit_menu ;;
+            NUM:3) config_defaults_menu ;;
+            ESC|EOF|CH:X|CH:x) return 0 ;;
+            *) : ;;
+        esac
+    done
+}
+
+config_edit_menu() {
+    local c
+    while true; do
+        clear
+        ui_title "$(t cfg_edit_title)"
+        ui_line "$(t cfg_edit_menu_items)"
+        ui_line "$(t cfg_edit_menu_direct)"
+        ui_nav
+        printf '> '
+        c="$(read_choice 2)"
+        case "$c" in
+            NUM:1) edit_config_screen ;;
+            NUM:2) config_edit_direct ;;
+            ESC|EOF|CH:X|CH:x) return 0 ;;
+            *) : ;;
+        esac
+    done
+}
+
+# 直接开编辑器前必须二次确认：旧版 G 一按就进 nano，普通人退不出来
+# （真机第 7 条）。没编辑器时 edit_raw_file 会自动降级到逐项编辑。
+config_edit_direct() {
+    clear
+    ui_title "$(t cfg_edit_menu_direct)"
+    ui_line "$(t cfg_direct_confirm)"
+    ui_rule
+    if ! confirm "$(t cfg_direct_confirm)"; then
+        return 0
+    fi
+    edit_raw_file
+}
+
+config_defaults_menu() {
+    local c
+    while true; do
+        clear
+        ui_title "$(t cfg_default_title)"
+        ui_line "$(t cfg_menu_viewdef)"
+        ui_line "$(t cfg_menu_restore)"
+        ui_nav
+        printf '> '
+        c="$(read_choice 2)"
+        case "$c" in
+            NUM:1) show_default_config ;;
+            NUM:2) config_restore_defaults ;;
+            ESC|EOF|CH:X|CH:x) return 0 ;;
+            *) : ;;
+        esac
+    done
+}
+
+config_restore_defaults() {
+    clear
+    ui_title "$(t cfg_default_title)"
+    ui_line "$(t cfg_reset_confirm2)"
+    ui_line "$(t cfg_path)$(ui_cut "$CONFIG_FILE" 20)"
+    ui_rule
+    if ! confirm "$(t cfg_reset_confirm2)" ; then
+        return 0
+    fi
+    if ! cfg_ensure_file; then
+        return 0
+    fi
+    cfg_reset_defaults
+    if cfg_write; then
+        echo "$(t cfg_reset_done)"
+        log "defaults restored: $CONFIG_FILE"
+    else
+        echo "$(t cfg_write_fail)"
+    fi
+    sleep 1
+    return 0
 }
 
 # 需要写文件时调用：文件不存在就先问用户（并让他选盘）。0=可以写，1=别写
@@ -230,7 +431,7 @@ cfg_ensure_file() {
 # ---------------- 展示用 ----------------
 show_where() {
     ui_title "$(t cfg_where_title)"
-    ui_line "$(t cfg_path)$CONFIG_FILE"
+    ui_line "$(t cfg_path)$(ui_cut "$CONFIG_FILE" 30)"
     if [ "$CFG_WRITABLE" = "1" ]; then
         ui_line "$(t cfg_writable_yes)"
     else
@@ -646,6 +847,7 @@ switch_language() {
 # ---------------- 入口 ----------------
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     case "${1:-}" in
+        # 旧 CLI 参数保留不删（脚本/帮助可能还在用）
         --guide)        show_guide ;;
         --guide-file)   show_guide_file ;;
         --auto-config)  toggle_key auto_config "$(t cfg_name_autocfg)" ;;
@@ -655,6 +857,9 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
         --usb-file)     edit_raw_file ;;
         --edit)         edit_config_screen ;;
         --language)     switch_language ;;
+        # 新设置页：C. Config / D. USB
+        --menu)         config_menu ;;
+        --usb)          usb_menu ;;
         *)              show_current_config ;;
     esac
 fi

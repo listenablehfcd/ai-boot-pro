@@ -22,7 +22,7 @@ if [ -n "${AI_BOOT_COMMON_LOADED:-}" ]; then
 fi
 AI_BOOT_COMMON_LOADED=1
 
-AI_BOOT_VERSION="1.3"
+AI_BOOT_VERSION="1.5"
 AI_BOOT_PRODUCT="AI Boot Pro"
 AI_BOOT_URL="https://github.com/listenablehfcd/ai-boot-pro"
 
@@ -556,6 +556,13 @@ PASS_FILE=""
 GUIDE_FILE=""
 CFG_WRITABLE=0
 CFG_VOLATILE=0
+# 配置位置三态（必须如实显示，绝不把内存说成持久）：
+#   persistent = 可写持久位置；readonly = 能读不能存；memory = 重启即失
+CFG_STATE="memory"
+CFG_STATE_REASON="no_media"
+CFG_PERSIST_STORE=""
+CFG_LOADED_FROM=""
+export CFG_STATE CFG_STATE_REASON CFG_PERSIST_STORE CFG_LOADED_FROM
 LANG_FILE=""
 
 # ── 自动挂载可移动分区（审计修复 A）─────────────────────────────────
@@ -645,47 +652,213 @@ find_usb_root() {
     return 1
 }
 
+
+# ── 配置持久化（2026-10-24 真机实测修复）──────────────────────────────
+# 真机事实：dd 写入的启动盘是只读 ISO9660，写不进去；而且镜像里没有
+# udisks/automount，插上的第二只 U 盘/持久化分区没人挂载。旧逻辑于是永远
+# 回落到 /run（tmpfs），重启就丢 —— 用户实测第 2/5/6 条。
+# 这里按"真的能持久"的顺序找位置：
+#   ① Debian live-boot persistence（/run/live/persistence/<dev>，旧版 /live/persistence/<dev>）
+#   ② 已挂载的可移动分区上已有的 <mnt>/AI-Boot 或 <mnt>/ai-boot.conf
+#   ③ 可写可移动分区上自动创建 <mnt>/AI-Boot
+#   ④ 只读的已有配置（能读不能存）
+#   ⑤ /run/ai-boot 内存（重启即失，界面必须如实说）
+# 安全：只认热插拔盘（HOTPLUG/RM/TRAN=usb|mmc），绝不碰内部系统盘；
+#       NTFS 只读挂载（防休眠 NTFS 被写坏）。
+
+cfg_disk_of() {
+    local n="$1" d
+    [ -n "$n" ] || return 1
+    if [ -e "/sys/class/block/$n/partition" ]; then
+        d="$(readlink -f "/sys/class/block/$n/.." 2>/dev/null)" || return 1
+        d="${d##*/}"; [ -n "$d" ] && [ "$d" != block ] || return 1
+        printf '%s\n' "$d"; return 0
+    fi
+    printf '%s\n' "$n"; return 0
+}
+cfg_is_hotplug() {
+    local n="$1" d rm hot tran
+    [ -n "$n" ] || return 1
+    d="$(cfg_disk_of "$n" 2>/dev/null)" || return 1
+    [ -n "$d" ] || return 1
+    rm="$(cat "/sys/class/block/$d/removable" 2>/dev/null || echo 0)"
+    [ "$rm" = 1 ] && return 0
+    hot="$(lsblk -dnro HOTPLUG "/dev/$d" 2>/dev/null | head -n1)"
+    [ "$hot" = 1 ] && return 0
+    tran="$(lsblk -dnro TRAN "/dev/$d" 2>/dev/null | head -n1)"
+    case "$tran" in usb|mmc) return 0 ;; esac
+    return 1
+}
+cfg_fstype_ok() {
+    case "$1" in
+        proc|sysfs|devtmpfs|tmpfs|devpts|squashfs|iso9660|udf|overlay|autofs|ramfs|nsfs|efivarfs|securityfs|debugfs|tracefs|cgroup|cgroup2|mqueue|hugetlbfs|pstore|bpf|fusectl) return 1 ;;
+    esac
+    return 0
+}
+# 分区是否在"Live 介质本身"所在的整盘上（dd hybrid ISO 的 EFI 分区不能写）
+cfg_inside_live_medium() {
+    local n="$1" dev mp fstype rest disk
+    disk="$(cfg_disk_of "$n" 2>/dev/null)" || return 1
+    while read -r dev mp fstype rest; do
+        case "$mp" in /run/live*|/lib/live*|/run/initramfs*) : ;; *) continue ;; esac
+        case "$dev" in /dev/*) ;; *) continue ;; esac
+        dev="${dev##*/}"
+        [ -e "/sys/class/block/$dev/partition" ] && continue
+        [ "$dev" = "$disk" ] && return 0
+    done < /proc/mounts
+    return 1
+}
+# 自动挂载可移动分区到 /run/media/<name>
+cfg_automount() {
+    command -v lsblk >/dev/null 2>&1 || return 0
+    command -v mount >/dev/null 2>&1 || return 0
+    local name fstype rm mp dev mnt mopts
+    while read -r name fstype rm mp; do
+        [ -n "$name" ] && [ -n "$fstype" ] && [ -z "$mp" ] || continue
+        cfg_fstype_ok "$fstype" || continue
+        case "$fstype" in vfat|fat|fat12|fat16|fat32|exfat|ntfs|ntfs3|ext2|ext3|ext4|f2fs|btrfs|xfs) : ;; *) continue ;; esac
+        cfg_is_hotplug "$name" || continue
+        cfg_inside_live_medium "$name" && continue
+        dev="/dev/$name"; [ -b "$dev" ] || continue
+        mnt="/run/media/$name"; mopts="rw,noatime"
+        case "$fstype" in ntfs|ntfs3) mopts="ro,noatime" ;; esac
+        mkdir -p "$mnt" 2>/dev/null || continue
+        timeout 8 mount -o "$mopts" "$dev" "$mnt" 2>/dev/null || true
+        grep -qF " $mnt " /proc/mounts || rmdir "$mnt" 2>/dev/null || true
+    done < <(lsblk -rno NAME,FSTYPE,RM,MOUNTPOINT 2>/dev/null)
+    return 0
+}
+# 找可写挂载点（≥64MB，优先 Ventoy）
+cfg_writable_mount() {
+    local dev mp fstype rest name free best="" bestfree=0 ventoy="" label
+    while read -r dev mp fstype rest; do
+        [ -n "$dev" ] && [ -n "$mp" ] || continue
+        case "$dev" in /dev/*) ;; *) continue ;; esac
+        cfg_fstype_ok "$fstype" || continue
+        case "$rest" in ro,*|*,ro,*|*,ro) continue ;; esac
+        case "$mp" in /|/run/live*|/lib/live*|/run/initramfs*|/run/ai-boot*) continue ;; esac
+        name="${dev##*/}"; cfg_is_hotplug "$name" || continue
+        [ -w "$mp" ] || continue
+        free="$(df -Pk "$mp" 2>/dev/null | awk 'NR==2{print $4}')"
+        case "$free" in ''|*[!0-9]*) free=0 ;; esac
+        [ "$free" -lt 65536 ] && continue
+        label=""; command -v blkid >/dev/null 2>&1 && label="$(blkid -s LABEL -o value "$dev" 2>/dev/null|head -n1)"
+        case "$label$mp" in *[Vv]entoy*) ventoy="$mp" ;; esac
+        [ "$free" -gt "$bestfree" ] && { best="$mp"; bestfree="$free"; }
+    done < /proc/mounts
+    [ -n "$ventoy" ] && { printf '%s\n' "$ventoy"; return 0; }
+    [ -n "$best" ] && { printf '%s\n' "$best"; return 0; }
+    return 1
+}
+# 已挂载介质上已有的配置目录（目录布局或根配置）
+cfg_existing_dirs() {
+    local mp
+    while read -r mp; do
+        [ -n "$mp" ] || continue
+        if [ -d "$mp/AI-Boot" ]; then printf '%s\n' "$mp/AI-Boot"
+        elif [ -f "$mp/ai-boot.conf" ]; then printf '%s\n' "$mp"; fi
+    done < <(awk '$2 ~ /^\/(run\/media|media|mnt)\// {print $2}' /proc/mounts 2>/dev/null)
+}
+# 三态显示
+cfg_status_label() {
+    case "$CFG_STATE" in
+        persistent) printf '%s' "$(t cfg_state_persist)" ;;
+        readonly)   printf '%s' "$(t cfg_state_readonly)" ;;
+        *)          printf '%s' "$(t cfg_state_memory)" ;;
+    esac
+}
+cfg_status_text() { printf '%s%s' "$(cfg_status_label)" "$CONFIG_FILE"; }
+cfg_state_reason_text() {
+    case "$CFG_STATE" in
+        readonly)   printf '%s' "$(t cfg_state_reason_readonly)" ;;
+        persistent) : ;;
+        *)          printf '%s' "$(t cfg_state_reason_memory)" ;;
+    esac
+}
+# 重新探测（现场插拔 U 盘后用）；keep = 保留内存里未保存的改动
+cfg_refresh_location() {
+    local mode="${1:-load}" k old="$AI_BOOT_DIR"
+    local -A kc=() kf=()
+    if [ "$mode" = keep ]; then
+        for k in "${!CFG[@]}"; do kc[$k]="${CFG[$k]}"; done
+        for k in "${!CFG_FROM_FILE[@]}"; do kf[$k]="${CFG_FROM_FILE[$k]}"; done
+    fi
+    init_paths
+    if [ "$AI_BOOT_DIR" != "$old" ]; then
+        LOCK_FILE="$AI_BOOT_DIR/ai-boot.lock"; export LOCK_FILE
+        key_pb_init 2>/dev/null || true
+    fi
+    if [ "$mode" = keep ]; then
+        CFG=(); CFG_FROM_FILE=()
+        for k in "${!kc[@]}"; do CFG[$k]="${kc[$k]}"; done
+        for k in "${!kf[@]}"; do CFG_FROM_FILE[$k]="${kf[$k]}"; done
+    else
+        cfg_load
+    fi
+    return 0
+}
+
 init_paths() {
-    local cand=""
-    # 先自己挂载可移动分区（镜像里没有 automount）：不先挂上，
-    # 第二只 U 盘 / Ventoy 数据分区永远进不了 find_usb_root 的扫描范围。
-    automount_removable
-    USB_ROOT="$(find_usb_root || true)"
-    CFG_WRITABLE=0
-    CFG_VOLATILE=1
+    local c mp first_ro="" ro_dir=""
+    AI_BOOT_DIR=""; USB_ROOT=""
+    CFG_WRITABLE=0; CFG_VOLATILE=1
+    CFG_STATE="memory"; CFG_STATE_REASON="no_media"; CFG_PERSIST_STORE=""
 
-    # 两种分区布局都要认（审计修复 B：原来只拼 /AI-Boot，直接放在分区根的
-    # ai-boot.conf 永远读不到，用户那份配置等于不存在）：
-    #   <U盘>/AI-Boot/ai-boot.conf   推荐布局
-    #   <U盘>/ai-boot.conf           根目录布局（Ventoy 数据分区常见）
-    if [ -n "$USB_ROOT" ]; then
-        if [ -d "$USB_ROOT/AI-Boot" ]; then
-            cand="$USB_ROOT/AI-Boot"
-        elif [ -f "$USB_ROOT/ai-boot.conf" ]; then
-            cand="$USB_ROOT"
+    # ① Debian live-boot persistence（唯一重启后一定还在的官方机制）
+    for c in /run/live/persistence/* /live/persistence/*; do
+        [ -d "$c" ] || continue
+        if mkdir -p "$c/AI-Boot" 2>/dev/null && ( : > "$c/AI-Boot/.wt" ) 2>/dev/null; then
+            rm -f "$c/AI-Boot/.wt" 2>/dev/null || true
+            ai_boot_set_dir "$c/AI-Boot"
+            CFG_WRITABLE=1; CFG_VOLATILE=0
+            CFG_STATE="persistent"; CFG_STATE_REASON="persistence"
+            CFG_PERSIST_STORE="$c"
+            break
         fi
-    fi
+    done
+    [ -z "$AI_BOOT_DIR" ] && grep -qw persistence /proc/cmdline 2>/dev/null && CFG_STATE_REASON="persistence_missing"
 
-    # 优先 U 盘：能写就用它，不能写就只读它（并让上层给出警告）
-    if [ -n "$cand" ]; then
-        mkdir -p "$cand/logs" 2>/dev/null || true
-        if touch "$cand/.wtest" 2>/dev/null; then
-            rm -f "$cand/.wtest" 2>/dev/null || true
-            AI_BOOT_DIR="$cand"
-            CFG_WRITABLE=1
-            CFG_VOLATILE=0
-        elif [ -f "$cand/ai-boot.conf" ]; then
-            AI_BOOT_DIR="$cand"
-            CFG_WRITABLE=0
-            CFG_VOLATILE=0
-        fi
-    fi
-
-    # 兜底：内存里（重启即失，上层必须提示用户）
+    # ② 已挂载可移动分区上已有的配置（可写优先，只读留兜底）
     if [ -z "$AI_BOOT_DIR" ]; then
-        AI_BOOT_DIR="/run/ai-boot"
-        CFG_WRITABLE=1
-        CFG_VOLATILE=1
+        cfg_automount
+        while IFS= read -r c; do
+            [ -n "$c" ] || continue
+            if ( : > "$c/.wt" ) 2>/dev/null; then
+                rm -f "$c/.wt" 2>/dev/null || true
+                ai_boot_set_dir "$c"
+                case "$c" in */AI-Boot) USB_ROOT="${c%/AI-Boot}" ;; *) USB_ROOT="$c" ;; esac
+                CFG_WRITABLE=1; CFG_VOLATILE=0
+                CFG_STATE="persistent"; CFG_STATE_REASON="usb"
+                break
+            fi
+            [ -z "$first_ro" ] && { first_ro="$c"; case "$c" in */AI-Boot) ro_dir="${c%/AI-Boot}" ;; *) ro_dir="$c" ;; esac; }
+        done < <(cfg_existing_dirs)
+    fi
+
+    # ③ 可写可移动分区上自动创建 AI-Boot 目录
+    if [ -z "$AI_BOOT_DIR" ] && [ -z "$first_ro" ]; then
+        mp="$(cfg_writable_mount || true)"
+        if [ -n "$mp" ] && mkdir -p "$mp/AI-Boot" 2>/dev/null && ( : > "$mp/AI-Boot/.wt" ) 2>/dev/null; then
+            rm -f "$mp/AI-Boot/.wt" 2>/dev/null || true
+            ai_boot_set_dir "$mp/AI-Boot"
+            USB_ROOT="$mp"
+            CFG_WRITABLE=1; CFG_VOLATILE=0
+            CFG_STATE="persistent"; CFG_STATE_REASON="usb_new"
+        fi
+    fi
+
+    # ④ 只读的已有配置
+    if [ -z "$AI_BOOT_DIR" ] && [ -n "$first_ro" ]; then
+        ai_boot_set_dir "$first_ro"; USB_ROOT="$ro_dir"
+        CFG_WRITABLE=0; CFG_VOLATILE=0
+        CFG_STATE="readonly"; CFG_STATE_REASON="usb_ro"
+    fi
+
+    # ⑤ 兜底：内存
+    if [ -z "$AI_BOOT_DIR" ]; then
+        ai_boot_set_dir "/run/ai-boot"
+        CFG_WRITABLE=1; CFG_VOLATILE=1
+        CFG_STATE="memory"
     fi
 
     CONFIG_FILE="$AI_BOOT_DIR/ai-boot.conf"
@@ -693,9 +866,9 @@ init_paths() {
     GUIDE_FILE="$AI_BOOT_DIR/guide.txt"
     LOG_FILE="$AI_BOOT_DIR/logs/ai-boot.log"
     mkdir -p "$AI_BOOT_DIR/logs" 2>/dev/null || true
-
     LANG_FILE="$AI_BOOT_DIR/lang"
-    export AI_BOOT_DIR CONFIG_FILE PASS_FILE GUIDE_FILE LOG_FILE LANG_FILE
+    export AI_BOOT_DIR CONFIG_FILE PASS_FILE GUIDE_FILE LOG_FILE LANG_FILE CFG_STATE CFG_STATE_REASON
+    return 0
 }
 
 # ── 5.0：配置文件位置可切换（选盘后用）+ 候选盘列举 ──────────────────
@@ -868,7 +1041,9 @@ cfg_load() {
     for k in "${!CFG_DEFAULT[@]}"; do
         CFG[$k]="${CFG_DEFAULT[$k]}"
     done
+    CFG_LOADED_FROM=""
     [ -f "$CONFIG_FILE" ] || return 0
+    CFG_LOADED_FROM="$CONFIG_FILE"
 
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in
@@ -1165,18 +1340,11 @@ t() {
             menu_overall)    echo "-- OVERALL CONFIG --" ;;
             menu_individual) echo "-- INDIVIDUAL CONFIG --" ;;
             menu_settings)   echo "-- SETTINGS --" ;;
-            menu_system)               echo "-- SYSTEM (careful) --" ;;
             menu_a)          echo "A. Rescue mode" ;;
             menu_b)          echo "B. Guided configuration" ;;
-            menu_c)          echo "C. Auto config" ;;
-            menu_d)          echo "D. Auto save" ;;
-            menu_e)          echo "E. Edit config file" ;;
-            menu_f)          echo "F. Default config" ;;
-            menu_g)          echo "G. USB config file" ;;
-            menu_h)          echo "H. Help" ;;
-            menu_l)          echo "L. Language" ;;
-            menu_r)          echo "R. Reboot" ;;
-            menu_s)          echo "S. Shutdown" ;;
+            menu_c)          echo "C. Config ..." ;;
+            menu_d)          echo "D. USB ..." ;;
+            menu_e)          echo "E. Other ..." ;;
             menu_1)          echo "1. SSH" ;;
             menu_2)          echo "2. WiFi / Refresh" ;;
             menu_3)          echo "3. Password file" ;;
@@ -1185,14 +1353,13 @@ t() {
             menu_6)          echo "6. File browser" ;;
             menu_7)          echo "7. Backup to shared" ;;
             menu_8)          echo "8. Self-check" ;;
-            menu_9)          echo "" ;;
-            menu_nav1)       echo "ESC / X : exit to command line      L : language" ;;
+            menu_nav1)       echo "ESC / X : exit to command line" ;;
             menu_nav2)       echo "digits  : select      ENTER : redraw" ;;
             menu_readonly)   echo "!! config is READ-ONLY:" ;;
             menu_volatile)   echo "!! no USB AI-Boot dir: config is in RAM" ;;
             exit_title)      echo "Exit AI-Boot main menu" ;;
             exit_line1)      echo "You will get a local root shell." ;;
-            exit_line2)      echo "Type exit in the shell to come back to this menu." ;;
+            exit_line2)      echo "Type exit in the shell to come back here." ;;
             exit_confirm)    echo "Exit to command line?" ;;
             ssh_title)       echo "SSH connection card" ;;
             ssh_ip)          echo "IP" ;;
@@ -1219,7 +1386,7 @@ t() {
             cfg_path)                  echo "Path: " ;;
             cfg_ro_title)            echo "This location is READ-ONLY" ;;
             cfg_ro_line)             echo "Changes cannot be saved to: " ;;
-            cfg_ro_save)             echo "Press O to save the current config to a writable disk, ESC = back." ;;
+            cfg_ro_save)             echo "O = save to a writable disk, ESC = back." ;;
             cfg_save_nano)           echo "  Save: Ctrl+O then Enter.   Quit: Ctrl+X." ;;
             cfg_save_vi)             echo "  Save and quit: press Esc, type :wq and Enter.   Quit without saving: Esc then :q!" ;;
             cfg_toggle_same)         echo "Unchanged." ;;
@@ -1231,11 +1398,11 @@ t() {
             cfg_source)              echo "Source: " ;;
             cfg_source_file)         echo "the config file on the disk" ;;
             cfg_source_mem)          echo "in-memory defaults (there is NO config file yet)" ;;
-            cfg_howto_t1)            echo "To make it load automatically, put ai-boot.conf on the USB stick:" ;;
-            cfg_howto_t2)            echo "  Ventoy stick (has a writable partition): <USB>/AI-Boot/ai-boot.conf" ;;
+            cfg_howto_t1)            echo "To load it at boot, put ai-boot.conf on a USB stick:" ;;
+            cfg_howto_t2)            echo "  Ventoy: <USB>/AI-Boot/ai-boot.conf" ;;
             cfg_howto_t2b)           echo "  dd-written ISO stick is READ-ONLY: plug in a SECOND writable USB and pick it with S" ;;
-            cfg_howto_t3)            echo "Without a file the built-in defaults are used; changes are lost on reboot." ;;
-            cfg_howto_keys)          echo "Keys: E edit item by item   G edit the raw file   ESC back" ;;
+            cfg_howto_t3)            echo "No file = built-in defaults; changes are lost on reboot." ;;
+            cfg_howto_keys)          echo "Keys: E items   G raw file   ESC back" ;;
             cfg_pick_title)          echo "Which disk should the config be written to?" ;;
             cfg_pick_mem)            echo "in memory only (/run/ai-boot, lost on reboot)" ;;
             cfg_pick_hint)           echo "Type the number and press ENTER. ESC cancels." ;;
@@ -1257,18 +1424,23 @@ t() {
             cfg_invalid_port)        echo "Please type a port number between 1 and 65535." ;;
             cfg_invalid_level)       echo "Please type one of: info, debug, warn, error." ;;
             cfg_saved_mem)           echo "changed in memory only (auto save is OFF, or no file yet)" ;;
-            cfg_toggle_hint)         echo "Press 1 to turn it ON, 0 to turn it OFF, ESC keeps it as it is." ;;
+            cfg_toggle_hint)         echo "Press 1 = ON, 0 = OFF, ESC = keep." ;;
             cfg_guide_help1)         echo "To use this, create a plain text file named guide.txt on the USB stick:" ;;
             cfg_guide_help2)         echo "  <USB>/AI-Boot/guide.txt   - it is only DISPLAYED here, never executed." ;;
             cfg_writable_yes)          echo "Writable: yes" ;;
             cfg_writable_no)           echo "Writable: no (changes will NOT be saved!)" ;;
             cfg_persist_no)            echo "Persistent: no (in memory, lost on reboot)" ;;
             cfg_persist_reason)        echo "Reason: no AI-Boot dir found on the USB stick" ;;
-            cfg_persist_yes)           echo "Persistent: yes (on the USB stick)" ;;
+            cfg_state_persist)         echo "[PERSISTENT] " ;;
+            cfg_state_readonly)        echo "[READ-ONLY] " ;;
+            cfg_state_memory)          echo "[MEMORY - lost on reboot] " ;;
+            cfg_state_reason_memory)   echo "Reason: no writable USB/disk found. Plug one in, then press S." ;;
+            cfg_state_reason_readonly) echo "Reason: read-only location - can load, cannot save." ;;
+        cfg_persist_yes)           echo "Persistent: yes (on the USB stick)" ;;
             cfg_usb_mount)             echo "USB mount point: " ;;
             cfg_current_list)          echo "Config in effect right now (defaults included):" ;;
             cfg_default_title)         echo "Default config" ;;
-            cfg_default_note)          echo "Applies when there is no config file, or after a reset with D:" ;;
+            cfg_default_note)          echo "Used when there is no config file, or after a D reset:" ;;
             cfg_guide_title)           echo "Guide config (rescue order)" ;;
             cfg_guide_s1)              echo "Step 1: read this config to get online (needs auto_config=1)" ;;
             cfg_guide_s2)              echo "Step 2: wired DHCP" ;;
@@ -1292,7 +1464,7 @@ t() {
             cfg_saved)                 echo "Saved: " ;;
             cfg_save_fail)             echo "Write failed (location read-only?): " ;;
             cfg_edit_list_title)       echo "Edit item by item (type the number, then press ENTER)" ;;
-            cfg_edit_keys)             echo "S write now   R reload   D defaults   W how to use this file" ;;
+            cfg_edit_keys)             echo "S write   R reload   D defaults   W help" ;;
             cfg_no_item_a)             echo "No item " ;;
             cfg_no_item_b)             echo "." ;;
             cfg_written)               echo "Written back to: " ;;
@@ -1302,7 +1474,7 @@ t() {
             cfg_reset_done)            echo "Defaults restored." ;;
             cfg_no_editor_title)       echo "No editor available" ;;
             cfg_no_editor_l1)          echo "This system has no nano / vim / vi." ;;
-            cfg_no_editor_l2)          echo "Falling back to item editing: same function, cannot corrupt the file." ;;
+            cfg_no_editor_l2)          echo "Falling back to item editing - it cannot corrupt the file." ;;
             cfg_open_a)                echo "Opening with " ;;
             cfg_open_b)                echo ": " ;;
             cfg_editor_hint)           echo "(after saving and quitting, press any key to return to the menu)" ;;
@@ -1347,13 +1519,13 @@ t() {
             help_k2)         echo "  X    same as ESC, kept from 4.0" ;;
             help_k3)         echo "  digit  pick that entry, then press ENTER" ;;
             help_k4)         echo "  ENTER  confirm / redraw this screen" ;;
-            help_k5)        echo "  L    switch language (English / Chinese)" ;;
+            help_k5)        echo "  E then 1 = language (English / Chinese)" ;;
             help_menu_title) echo "Main menu entries:" ;;
-            help_m1)         echo "  A guides   B guide file   C auto config   D auto save" ;;
-            help_m2)         echo "  E edit config   F default config   G raw config file" ;;
-            help_m3)         echo "  1 SSH   2 WiFi   3 rescue   4 password   5 shell" ;;
-            help_m4)         echo "  6 Windows tools   7 file browser   8 backup   9 self-check" ;;
-            help_m5)         echo "  L language   R reboot   S shutdown" ;;
+            help_m1)         echo "  A rescue   B guided configuration" ;;
+            help_m2)         echo "  C config   D USB   E other" ;;
+            help_m3)         echo "  1 SSH   2 WiFi   3 password" ;;
+            help_m4)         echo "  4 command line   5 Windows tools" ;;
+            help_m5)         echo "  6 file browser   7 backup   8 self-check" ;;
             help_cfg)        echo "Config file: " ;;
             help_note1)      echo "SSH user: from ai_user (default ai); password: random on every boot." ;;
             help_note2)      echo "After logging in, read /usr/local/share/ai-boot/AI-README.txt first." ;;
@@ -1385,16 +1557,16 @@ t() {
             tools_bak_title)    echo "Back up Windows files (hint only)" ;;
             tools_bak_line)     echo "Mount with 2 first, then do it by hand:" ;;
             tools_iso_title)    echo "Write a Windows ISO (hint only)" ;;
-            tools_iso_line)     echo "This wipes the target disk, so this version will not do it. Template:" ;;
+            tools_iso_line)     echo "This wipes the target disk, so it is not done here. Template:" ;;
             tools_iso_s1)       echo "lsblk                                  # confirm the device name first" ;;
-            tools_iso_warn)     echo "of= must be the device, not a partition; the wrong disk destroys data." ;;
+            tools_iso_warn)     echo "of= must be the whole device; the wrong disk destroys data." ;;
             tools_browse_title) echo "File browser" ;;
             tools_cwd)          echo "Current directory: " ;;
             tools_nodirs)       echo "(no subdirectories)" ;;
             tools_dir_tag)      echo "[dir]" ;;
             tools_other_a)      echo "This directory has " ;;
             tools_other_b)      echo " more files (not selectable)" ;;
-            tools_browse_nav)   echo "digit to enter    U up    P long listing    ESC back" ;;
+            tools_browse_nav)   echo "digit enter   U up   P list   ESC back" ;;
             tools_list_fail)    echo "Listing failed" ;;
             tools_no_dir_a)     echo "There is no directory " ;;
             tools_no_dir_b)     echo "." ;;
@@ -1408,9 +1580,9 @@ t() {
             tools_done)         echo "Done." ;;
             tools_smb_title)    echo "SMB backup" ;;
             tools_smb_line)     echo "This version does not implement SMB. You can do it by hand:" ;;
-            tools_smb_cmd)      echo "mount -t cifs //server/share /mnt/smb -o username=user,password=pass" ;;
+            tools_smb_cmd)      echo "mount -t cifs //server/share /mnt/smb" ;;
             tools_smb_cp)       echo "cp -av /path/to/backup /mnt/smb/" ;;
-            tools_smb_note)     echo "(the 4.0 memory doc also lists SMB as unfinished)" ;;
+            tools_smb_note)     echo "(the 4.0 notes also list SMB as unfinished)" ;;
             tools_check_title)  echo "Self-check / diagnostics" ;;
             tools_net)          echo "Network:" ;;
             tools_none)         echo "  none" ;;
@@ -1478,7 +1650,7 @@ t() {
             ssh_locked_title) echo "SSH is locked" ;;
             ssh_locked_file) echo "Lock file present: " ;;
             ssh_locked_hint) echo "Delete it to enable remote access." ;;
-            ssh_not_listening_hint) echo "Use 9.Self-check to see the port, or check journalctl -u ssh." ;;
+            ssh_not_listening_hint) echo "Port: see 8.Self-check, or run journalctl -u ssh." ;;
             rescue_title) echo "AI Rescue Mode" ;;
             rescue_intro1)   echo "It tries several ways to get online; the first success goes to the monitor page." ;;
             rescue_esc_hint) echo "ESC = abort back to the main menu" ;;
@@ -1503,7 +1675,7 @@ t() {
             gd_wired_2)                echo "Getting an address over the cable..." ;;
             gd_wired_fail)             echo "No internet from the cable. Check both ends, or try another way." ;;
             gd_wifi_1)                 echo "Next I scan; pick your WiFi and type its password." ;;
-            gd_wifi_fail)              echo "WiFi is up but there is no internet (a login page may be needed)." ;;
+            gd_wifi_fail)              echo "WiFi is up but there is no internet (login page?)." ;;
             gd_usb_1)                  echo "On the phone: Settings - Hotspot - USB sharing." ;;
             gd_usb_2)                  echo "Waiting for the phone as a network card..." ;;
             gd_usb_fail)               echo "No phone network card. Check the cable and that USB sharing is ON." ;;
@@ -1524,23 +1696,23 @@ t() {
             gd_local_title)            echo "No network yet - what still works here" ;;
             gd_local_1)                echo "A network cable is easiest: plug it in, then reboot." ;;
             gd_local_2)                echo "Or move the machine where there is a cable or WiFi." ;;
-            gd_local_3)                echo "Other things work without internet: disks, backup, Windows tools." ;;
-            gd_local_4)                echo "Manual: ip -br link then dhcpcd <iface> then ip -br addr" ;;
+            gd_local_3)                echo "No internet needed: disks, backup." ;;
+            gd_local_4)                echo "Manual: ip -br link, then dhcpcd." ;;
             gd_local_5)                echo "Once online, come back here and the AI can connect." ;;
             ssh_diag_privsep)          echo "Reason: the sshd system user is missing in this image." ;;
             ssh_diag_hostkey)          echo "Reason: no host key yet (ssh-keygen -A has not run)." ;;
-            ssh_diag_unknown)          echo "Reason: unknown - see the log / page 9." ;;
+            ssh_diag_unknown)          echo "Reason: unknown - see the log or 8.Self-check." ;;
             tools_bak_progress)        echo "Backing up... files:" ;;
             tools_bak_esc)             echo "(ESC = cancel)" ;;
             tools_bak_abort)           echo "Stop the backup now? Files already copied are kept." ;;
             tools_bak_cancelled)       echo "Backup CANCELLED by you." ;;
             tools_bak_failed)          echo "Backup FAILED (see the reason above)." ;;
             tools_ssh_yes)             echo "==> sshd IS listening: the AI can connect." ;;
-            tools_ssh_no)              echo "==> sshd is NOT listening: the AI cannot connect yet." ;;
+            tools_ssh_no)              echo "==> sshd is NOT listening: the AI cannot connect." ;;
             pw_reuse)                  echo "Reusing the password generated earlier this boot:" ;;
-            ssh_new_pw)                echo "Press N within 10 seconds to generate a NEW password, or wait to keep this one." ;;
+            ssh_new_pw)                echo "Press N in 10s for a NEW password, or wait to keep it." ;;
             rescue_auto_mode)          echo "AUTOMATIC RESCUE (no keyboard needed)" ;;
-            rescue_auto_hint)          echo "Nothing to press here - it runs by itself. ESC returns to the menu." ;;
+            rescue_auto_hint)          echo "Nothing to press - it runs by itself. ESC = menu." ;;
             rescue_auto_pick_no)       echo "No key pressed - I will continue as 'cannot operate' in" ;;
             rescue_can_type)           echo "Can you use a keyboard right now?" ;;
             rescue_can_yes)            echo "  1  Yes, I can type (I will ask a few questions)" ;;
@@ -1560,10 +1732,10 @@ t() {
             rescue_s2_fail_auto)       echo "The phone hotspot did not answer (is it still on?)." ;;
             rescue_s2_pick)            echo "Next I will scan for WiFi; pick your phone's hotspot from the list." ;;
             rescue_s3_starting)        echo "Starting this machine's own hotspot..." ;;
-            rescue_s3_join_hint)       echo "Now join this hotspot from your phone or another device." ;;
+            rescue_s3_join_hint)       echo "Join this hotspot from a phone or another device." ;;
             rescue_ssh_fail_title)     echo "sshd did NOT start" ;;
             rescue_ssh_fail_l1)        echo "Nothing is listening on port " ;;
-            rescue_ssh_fail_l2)        echo "The AI cannot connect yet. See page 9 (self-check) or the log." ;;
+            rescue_ssh_fail_l2)        echo "The AI cannot connect yet. See 8.Self-check." ;;
             rescue_guided_title)       echo "Which network can you give this machine?" ;;
             rescue_guided_ask)         echo "Pick one - I will do the rest:" ;;
             rescue_guided_1)           echo "  1  A network cable (simplest: just plug it in)" ;;
@@ -1573,8 +1745,8 @@ t() {
             rescue_guided_5)           echo "  5  None of these (show me what to do locally)" ;;
             rescue_estop_on)           echo "EMERGENCY STOP is active: " ;;
             rescue_estop_how)          echo "The rescue flow is disabled. Clear it on the monitor page (key 0)." ;;
-            rescue_s4_manual)          echo "Manual: ip -br link (list NICs) -> dhcpcd <iface> -> ip -br addr" ;;
-            rescue_s4_keys)            echo "Or plug in a cable / a phone hotspot and reboot. Logs: page 9, or the monitor page (L)." ;;
+            rescue_s4_manual)          echo "Manual: ip -br link, then dhcpcd <iface>." ;;
+            rescue_s4_keys)            echo "Or cable / phone hotspot, then reboot. Logs: 8.Self-check." ;;
             rescue_s4_shell_confirm)   echo "Open a local root command line now?" ;;
             rescue_auto_monitor)   echo "Monitor page in 5 seconds (any key goes now)..." ;;
             rescue_lockfile) echo "A lock file exists; remote access is disabled and rescue is skipped." ;;
@@ -1605,12 +1777,12 @@ t() {
             rescue_s2_retry_enter) echo "ENTER = try again from the beginning" ;;
             rescue_s2_esc) echo "ESC  = abort back to the main menu" ;;
             rescue_s3_title) echo "Step 3 | Start a hotspot on this machine" ;;
-            rescue_s3_ask) echo "Let this machine start its own hotspot so other devices can connect?" ;;
+            rescue_s3_ask) echo "Start a hotspot on this machine for other devices?" ;;
             rescue_s3_confirm) echo "Start the local hotspot?" ;;
             rescue_s3_started) echo "The hotspot has started." ;;
             rescue_s3_fail) echo "Start failed: no hostapd and no nmcli." ;;
             rescue_s4_title) echo "Step 4 | Fallback" ;;
-            rescue_s4_line1) echo "Earlier steps failed; opening a local command line for manual work." ;;
+            rescue_s4_line1) echo "Earlier steps failed; opening a local command line." ;;
             rescue_s4_line2) echo "Type exit to return to the main menu." ;;
             net_no_wifi) echo "No wireless interface found." ;;
             net_wpa_conf_fail) echo "Cannot write /tmp/wpa.conf" ;;
@@ -1636,7 +1808,7 @@ t() {
             net_ip_offline) echo "not connected" ;;
             net_no_networks) echo "No networks were found." ;;
             net_no_networks_hint) echo "R rescan, M enter an SSID manually." ;;
-            net_nav_hint) echo "Number + ENTER to select   M enter SSID manually   R rescan" ;;
+            net_nav_hint) echo "Number + ENTER select   M manual SSID   R rescan" ;;
             net_no_item_a) echo "There is no item " ;;
             net_no_item_b) echo "." ;;
             net_rescanning) echo "Rescanning ..." ;;
@@ -1660,11 +1832,35 @@ t() {
             pw_new_ssh_prompt) echo "New SSH password (ESC to cancel): " ;;
             pw_cancelled) echo "Cancelled." ;;
             shell_title) echo "Local command line" ;;
-            shell_text) echo "This is a root shell. Type exit to return to the main menu." ;;
+            shell_text) echo "This is a root shell. Type exit to return." ;;
             shell_exit) echo "Left the command line, back to the main menu." ;;
             menu_confirm_reboot) echo "Reboot?" ;;
             menu_confirm_shutdown) echo "Shut down?" ;;
             pw_title)        echo "4. Password file" ;;
+            title_config) echo "Config" ;;
+            cfg_menu_view) echo "1. View current config" ;;
+            cfg_menu_edit) echo "2. Edit config" ;;
+            cfg_menu_defaults) echo "3. Defaults" ;;
+            cfg_edit_menu_items) echo "1. Item by item" ;;
+            cfg_edit_menu_direct) echo "2. Edit the file directly (confirm)" ;;
+            cfg_direct_confirm) echo "Edit the raw file? A typo can break the config." ;;
+            cfg_menu_viewdef) echo "1. View default values" ;;
+            cfg_menu_restore) echo "2. Restore defaults (confirm)" ;;
+            title_usb) echo "USB location" ;;
+            cfg_usb_save) echo "1. Save to USB" ;;
+            cfg_usb_choose) echo "2. Choose USB location" ;;
+            cfg_usb_none) echo "No writable USB found. Plug one in first." ;;
+            cfg_loaded_from) echo "Loaded from: " ;;
+            title_other) echo "Other" ;;
+            other_lang) echo "1. Language" ;;
+            other_help) echo "2. Help" ;;
+            other_power) echo "3. Reboot / Shutdown" ;;
+            other_reboot) echo "1. Reboot" ;;
+            other_shutdown) echo "2. Shutdown" ;;
+            confirm_again) echo "Please confirm AGAIN" ;;
+            help_first) echo "Not sure? Press A to enter rescue mode (automatic)" ;;
+            help_m6) echo "  E: language / help / reboot / shutdown" ;;
+            cfg_location_label) echo "Location: " ;;
             *)               echo "$key" ;;
         esac
         return 0
@@ -1677,18 +1873,11 @@ t() {
         menu_overall)    echo "-- 整体配置 --" ;;
         menu_individual) echo "-- 单独配置 --" ;;
         menu_settings)   echo "-- 设置 --" ;;
-        menu_system)               echo "-- 系统（重启/关机）--" ;;
         menu_a)          echo "A. 急救模式" ;;
         menu_b)          echo "B. 引导配置" ;;
-        menu_c)          echo "C. 自动配置" ;;
-        menu_d)          echo "D. 自动保存" ;;
-        menu_e)          echo "E. 编辑配置文件" ;;
-        menu_f)          echo "F. 默认配置" ;;
-        menu_g)          echo "G. U 盘配置文件" ;;
-        menu_h)          echo "H. 帮助" ;;
-        menu_l)          echo "L. 语言" ;;
-        menu_r)          echo "R. 重启" ;;
-        menu_s)          echo "S. 关机" ;;
+        menu_c)          echo "C. 配置 ..." ;;
+        menu_d)          echo "D. U 盘 ..." ;;
+        menu_e)          echo "E. 其它 ..." ;;
         menu_1)          echo "1. SSH" ;;
         menu_2)          echo "2. WiFi / 刷新" ;;
         menu_3)          echo "3. 密码文件" ;;
@@ -1697,14 +1886,13 @@ t() {
         menu_6)          echo "6. 文件浏览" ;;
         menu_7)          echo "7. 备份到共享" ;;
         menu_8)          echo "8. 自检" ;;
-        menu_9)          echo "" ;;
-        menu_nav1)       echo "ESC / X : 退出到命令行      L : 语言" ;;
+        menu_nav1)       echo "ESC / X : 退出到命令行" ;;
         menu_nav2)       echo "数字 : 选择      ENTER : 重绘" ;;
         menu_readonly)   echo "!! 配置只读：" ;;
         menu_volatile)   echo "!! 没找到 U 盘：配置在内存" ;;
         exit_title)      echo "退出 AI-Boot 主菜单" ;;
         exit_line1)      echo "退出后拿到一个本机 root 命令行。" ;;
-        exit_line2)      echo "在命令行里输入 exit 会自动回到这个菜单。" ;;
+        exit_line2)      echo "输入 exit 就回到这个菜单。" ;;
         exit_confirm)    echo "确定退出到命令行？" ;;
         ssh_title)       echo "SSH 连接卡" ;;
         ssh_ip)          echo "IP 地址" ;;
@@ -1731,7 +1919,7 @@ t() {
         cfg_path)                  echo "路径：" ;;
         cfg_ro_title)            echo "这个位置是只读的" ;;
         cfg_ro_line)             echo "改动无法保存到：" ;;
-        cfg_ro_save)             echo "按 O 把当前配置保存到可写磁盘，ESC 返回。" ;;
+        cfg_ro_save)             echo "O 保存到可写磁盘，ESC 返回。" ;;
         cfg_save_nano)           echo "  存盘：Ctrl+O 再回车。  退出：Ctrl+X。" ;;
         cfg_save_vi)             echo "  存盘退出：按 Esc，输入 :wq 再回车。  不保存退出：按 Esc 再输入 :q!" ;;
         cfg_toggle_same)         echo "没有改动。" ;;
@@ -1743,11 +1931,11 @@ t() {
         cfg_source)              echo "来源：" ;;
         cfg_source_file)         echo "磁盘上的配置文件" ;;
         cfg_source_mem)          echo "内存里的默认值（还没有配置文件）" ;;
-        cfg_howto_t1)            echo "想让它开机自动生效：把 ai-boot.conf 放到 U 盘上" ;;
-        cfg_howto_t2)            echo "  Ventoy 做的 U 盘（有可写分区）：<U盘>/AI-Boot/ai-boot.conf" ;;
+        cfg_howto_t1)            echo "开机自动用：把 ai-boot.conf 放 U 盘" ;;
+        cfg_howto_t2)            echo "  Ventoy:<U盘>/AI-Boot/ai-boot.conf" ;;
             cfg_howto_t2b)           echo "  dd 写入的 ISO 盘只读：可用别的可写 U 盘来保存" ;;
-        cfg_howto_t3)            echo "没有文件时用的是内置默认值，改动重启就没了。" ;;
-        cfg_howto_keys)          echo "按键：E 逐项编辑   G 编辑原始文件   ESC 返回" ;;
+        cfg_howto_t3)            echo "没有文件就用内置默认值，重启就丢。" ;;
+        cfg_howto_keys)          echo "按键：E 逐项   G 原文件   ESC 返回" ;;
         cfg_pick_title)          echo "配置写到哪个位置？" ;;
         cfg_pick_mem)            echo "只放内存（/run/ai-boot，重启就没了）" ;;
         cfg_pick_hint)           echo "输入序号后按回车。ESC 取消。" ;;
@@ -1769,18 +1957,23 @@ t() {
         cfg_invalid_port)        echo "请输入 1 到 65535 之间的端口号。" ;;
         cfg_invalid_level)       echo "请输入 info、debug、warn 或 error 之一。" ;;
         cfg_saved_mem)           echo "只改了内存（自动保存已关，或还没有文件）" ;;
-        cfg_toggle_hint)         echo "按 1 设为开、按 0 设为关、ESC 保持原样。" ;;
+        cfg_toggle_hint)         echo "按 1 设为开、0 设为关、ESC 保持原样。" ;;
         cfg_guide_help1)         echo "用法：在 U 盘上放一个文本文件 guide.txt" ;;
         cfg_guide_help2)         echo "  <U盘>/AI-Boot/guide.txt   这里只是看，不会执行。" ;;
         cfg_writable_yes)          echo "可写：是" ;;
         cfg_writable_no)           echo "可写：否（改动不会保存！）" ;;
         cfg_persist_no)            echo "持久：否（在内存里，重启就没了）" ;;
         cfg_persist_reason)        echo "原因：没找到 U 盘上的 AI-Boot 目录" ;;
+        cfg_state_persist)         echo "[持久] " ;;
+        cfg_state_readonly)        echo "[只读] " ;;
+        cfg_state_memory)          echo "[仅内存,重启会丢] " ;;
+        cfg_state_reason_memory)   echo "原因:没有可写磁盘。接好 U 盘后按 S。" ;;
+        cfg_state_reason_readonly) echo "原因:位置只读,能读不能存。" ;;
         cfg_persist_yes)           echo "持久：是（在 U 盘上）" ;;
         cfg_usb_mount)             echo "U 盘挂载点：" ;;
         cfg_current_list)          echo "当前生效的配置（含默认值）：" ;;
         cfg_default_title)         echo "默认配置" ;;
-        cfg_default_note)          echo "下面这些值会在没有配置文件、或按 D 重置时生效：" ;;
+        cfg_default_note)          echo "没有配置文件、或按 D 重置时生效：" ;;
         cfg_guide_title)           echo "引导配置（急救顺序）" ;;
         cfg_guide_s1)              echo "第 1 步：读本配置联网（需要 auto_config=1）" ;;
         cfg_guide_s2)              echo "第 2 步：有线 DHCP" ;;
@@ -1804,7 +1997,7 @@ t() {
         cfg_saved)                 echo "已保存：" ;;
         cfg_save_fail)             echo "写入失败（位置只读？）：" ;;
         cfg_edit_list_title)       echo "逐项编辑（输入序号后按回车）" ;;
-        cfg_edit_keys)             echo "S 立即写回   R 重读   D 恢复默认   W 这个文件怎么用" ;;
+        cfg_edit_keys)             echo "S 写回   R 重读   D 默认   W 说明" ;;
         cfg_no_item_a)             echo "没有第 " ;;
         cfg_no_item_b)             echo " 项。" ;;
         cfg_written)               echo "已写回：" ;;
@@ -1814,7 +2007,7 @@ t() {
         cfg_reset_done)            echo "已恢复默认值。" ;;
         cfg_no_editor_title)       echo "没有可用的编辑器" ;;
         cfg_no_editor_l1)          echo "本系统里没有 nano / vim / vi。" ;;
-        cfg_no_editor_l2)          echo "改用逐项编辑，功能一样，不会把文件改坏。" ;;
+        cfg_no_editor_l2)          echo "改用逐项编辑，不会把文件改坏。" ;;
         cfg_open_a)                echo "用 " ;;
         cfg_open_b)                echo " 打开：" ;;
         cfg_editor_hint)           echo "（存盘退出后按任意键回到菜单）" ;;
@@ -1859,13 +2052,13 @@ t() {
         help_k2)         echo "  X    与 ESC 一样，沿用 4.0" ;;
         help_k3)         echo "  数字 直接选择对应序号后按回车" ;;
         help_k4)         echo "  回车 确认 / 重绘当前界面" ;;
-            help_k5)        echo "   L    切换语言（英文 / 中文）" ;;
+            help_k5)        echo "  E 里选 1 = 语言（英文 / 中文）" ;;
         help_menu_title) echo "主菜单各功能：" ;;
-        help_m1)         echo "  A 说明   B 引导文件   C 自动配置   D 自动保存" ;;
-        help_m2)         echo "  E 编辑配置   F 默认配置   G 原始配置文件" ;;
-        help_m3)         echo "  1 SSH   2 WiFi   3 急救   4 密码   5 命令行" ;;
-        help_m4)         echo "  6 Windows 工具   7 文件浏览   8 备份   9 自检" ;;
-        help_m5)         echo "  L 语言   R 重启   S 关机" ;;
+        help_m1)         echo "  A 急救模式   B 引导配置" ;;
+        help_m2)         echo "  C 配置   D U 盘   E 其它" ;;
+        help_m3)         echo "  1 SSH   2 WiFi   3 密码文件" ;;
+        help_m4)         echo "  4 命令行   5 Windows 工具" ;;
+        help_m5)         echo "  6 文件浏览   7 备份   8 自检" ;;
         help_cfg)        echo "配置文件：" ;;
         help_note1)      echo "默认 SSH 用户由 ai_user 决定（默认 ai），密码每次开机随机。" ;;
         help_note2)      echo "登录后先读 /usr/local/share/ai-boot/AI-README.txt。" ;;
@@ -1887,7 +2080,7 @@ t() {
         tools_mnt_r2)       echo "  - NTFS 处于休眠脏状态（先在 Windows 里完全关机）" ;;
         tools_mnt_r3)       echo "  - 需要 ntfs-3g：" ;;
         tools_fix_title)    echo "修复 Windows 引导（仅提示）" ;;
-        tools_fix_line)     echo "本版本没有实现自动修复，需要你手工执行：" ;;
+        tools_fix_line)     echo "本版本不自动修复，需要手工执行：" ;;
         tools_fix_s1)       echo "1) 先在 Windows 里：" ;;
         tools_fix_s2)       echo "   （S: 是 EFI 分区盘符）" ;;
         tools_fix_s3)       echo "2) 或在 Linux 里：" ;;
@@ -1897,16 +2090,16 @@ t() {
         tools_bak_title)    echo "备份 Windows 文件（仅提示）" ;;
         tools_bak_line)     echo "先用 2 挂载，然后手工：" ;;
         tools_iso_title)    echo "写入 Windows ISO（仅提示）" ;;
-        tools_iso_line)     echo "这一步会清空目标盘，本版本不代做。命令模板：" ;;
+        tools_iso_line)     echo "会清空目标盘，本版本不代做。模板：" ;;
         tools_iso_s1)       echo "lsblk                                  # 先确认盘符" ;;
-        tools_iso_warn)     echo "注意：of= 指向设备而不是分区，写错盘会毁数据。" ;;
+        tools_iso_warn)     echo "of= 要指向整盘设备，写错盘会毁数据。" ;;
         tools_browse_title) echo "文件浏览" ;;
         tools_cwd)          echo "当前目录：" ;;
         tools_nodirs)       echo "（没有子目录）" ;;
         tools_dir_tag)      echo "[目录]" ;;
         tools_other_a)      echo "本目录另有 " ;;
         tools_other_b)      echo " 个文件（不参与选择）" ;;
-        tools_browse_nav)   echo "输入序号进入    U 回上级    P 详细列举    ESC 返回" ;;
+        tools_browse_nav)   echo "数字进入   U 上级   P 详细   ESC 返回" ;;
         tools_list_fail)    echo "列举失败" ;;
         tools_no_dir_a)     echo "没有第 " ;;
         tools_no_dir_b)     echo " 个目录。" ;;
@@ -1920,9 +2113,9 @@ t() {
         tools_done)         echo "完成。" ;;
         tools_smb_title)    echo "SMB 备份" ;;
         tools_smb_line)     echo "本版本没有实现 SMB。可以手工：" ;;
-        tools_smb_cmd)      echo "mount -t cifs //服务器/共享 /mnt/smb -o username=用户,password=密码" ;;
+        tools_smb_cmd)      echo "mount -t cifs //服务器/共享 /mnt/smb" ;;
         tools_smb_cp)       echo "cp -av /要备份的路径 /mnt/smb/" ;;
-        tools_smb_note)     echo "（4.0 的记忆文档里也把 SMB 列为未完成项）" ;;
+        tools_smb_note)     echo "（4.0 的说明里也把 SMB 列为未完成）" ;;
         tools_check_title)  echo "自检 / 诊断" ;;
         tools_net)          echo "网络：" ;;
         tools_none)         echo "  无" ;;
@@ -1990,7 +2183,7 @@ t() {
         ssh_locked_title) echo "SSH 已锁定" ;;
         ssh_locked_file) echo "存在锁定文件：" ;;
         ssh_locked_hint) echo "删除它才能开启远程访问。" ;;
-        ssh_not_listening_hint) echo "可以用 9.Self-check 看端口，或看 journalctl -u ssh。" ;;
+        ssh_not_listening_hint) echo "端口见 8.自检，或 journalctl -u ssh。" ;;
         rescue_title) echo "AI 急救模式" ;;
         rescue_intro1)   echo "会自动依次尝试联网；哪一步成功就进监视页。" ;;
         rescue_esc_hint) echo "ESC = 中止回主菜单" ;;
@@ -2015,7 +2208,7 @@ t() {
         gd_wired_2)                echo "正从网线取地址…" ;;
         gd_wired_fail)             echo "网线没能上网。查两头，或换一种。" ;;
         gd_wifi_1)                 echo "下一步扫描：选中你的 WiFi 并输密码。" ;;
-        gd_wifi_fail)              echo "WiFi 已连，不能上网（可能要网页登录）。" ;;
+        gd_wifi_fail)              echo "WiFi 已连，不能上网，可能要网页登录。" ;;
         gd_usb_1)                  echo "手机上：设置 - 热点 - USB 共享。" ;;
         gd_usb_2)                  echo "等手机以网卡出现…" ;;
         gd_usb_fail)               echo "没出现手机网卡。查数据线和 USB 共享。" ;;
@@ -2036,23 +2229,23 @@ t() {
         gd_local_title)            echo "暂时没网 —— 这里还能用" ;;
         gd_local_1)                echo "网线最好用：接好后重启。" ;;
         gd_local_2)                echo "或换个有网线/WiFi 的位置。" ;;
-        gd_local_3)                echo "其它不需要网也能用：看盘、备份、Windows 工具。" ;;
-        gd_local_4)                echo "手动：ip -br link 再看 dhcpcd <网卡> 再看 ip -br addr" ;;
+        gd_local_3)                echo "不用网也能用：看盘、备份。" ;;
+        gd_local_4)                echo "手动：ip -br link 看网卡，再 dhcpcd" ;;
         gd_local_5)                echo "连上后回到这里，AI 就能连进来。" ;;
         ssh_diag_privsep)          echo "原因：这个镜像里缺 sshd 系统用户。" ;;
         ssh_diag_hostkey)          echo "原因：还没有主机密钥（ssh-keygen -A 没跑过）。" ;;
-        ssh_diag_unknown)          echo "原因：未知 —— 请看日志或 9.自检。" ;;
+        ssh_diag_unknown)          echo "原因：未知 —— 请看日志或 8.自检。" ;;
         tools_bak_progress)        echo "正在备份... 已复制文件数：" ;;
         tools_bak_esc)             echo "（ESC = 取消）" ;;
         tools_bak_abort)           echo "现在停止备份？已经复制过去的会保留。" ;;
         tools_bak_cancelled)       echo "备份已被你取消。" ;;
         tools_bak_failed)          echo "备份失败（原因见上面）。" ;;
         tools_ssh_yes)             echo "==> sshd 正在监听：AI 可以连进来。" ;;
-        tools_ssh_no)              echo "==> sshd 没有在监听：AI 现在还连不进来。" ;;
+        tools_ssh_no)              echo "==> sshd 没在监听：AI 连不进来。" ;;
         pw_reuse)                  echo "继续使用本次开机的密码：" ;;
-        ssh_new_pw)                echo "10 秒内按 N 可以重新生成密码，不按就继续用现在这个。" ;;
+        ssh_new_pw)                echo "10 秒内按 N 重新生成，不按就继续用。" ;;
         rescue_auto_mode)          echo "全自动急救（不需要键盘）" ;;
-        rescue_auto_hint)          echo "这一屏不需要按任何键，它会自己往下走。按 ESC 返回主菜单。" ;;
+        rescue_auto_hint)          echo "不用按键，它会自己走。ESC 返回主菜单。" ;;
         rescue_auto_pick_no)       echo "没有按键，将按 不能按键 继续，还有" ;;
         rescue_can_type)           echo "现在能用键盘吗？" ;;
         rescue_can_yes)            echo "  1  能，可以打字（会问你几句）" ;;
@@ -2072,10 +2265,10 @@ t() {
         rescue_s2_fail_auto)       echo "手机热点连不上（还开着吗？）。" ;;
         rescue_s2_pick)            echo "接下来扫描 WiFi，请从列表里选中你手机的热点。" ;;
         rescue_s3_starting)        echo "正在让本机自己开热点…" ;;
-        rescue_s3_join_hint)       echo "现在用你的手机或另一台设备连上这个热点。" ;;
+        rescue_s3_join_hint)       echo "用手机或另一台设备连上这个热点。" ;;
         rescue_ssh_fail_title)     echo "sshd 没有启动" ;;
         rescue_ssh_fail_l1)        echo "端口上没有在监听：" ;;
-        rescue_ssh_fail_l2)        echo "AI 现在还连不进来。请看 9.自检 或监视页的日志。" ;;
+        rescue_ssh_fail_l2)        echo "AI 还连不进来。请看 8.自检。" ;;
         rescue_guided_title)       echo "你的网络是哪种？" ;;
         rescue_guided_ask)         echo "选一个，其余自动完成：" ;;
         rescue_guided_1)           echo "  1  有网线（先试这个）" ;;
@@ -2085,8 +2278,8 @@ t() {
         rescue_guided_5)           echo "  5  都没有（看本地怎么手动处理）" ;;
         rescue_estop_on)           echo "急停标记正在生效：" ;;
         rescue_estop_how)          echo "急救已被禁用。请在监视页按 0 清除它。" ;;
-        rescue_s4_manual)          echo "手动：ip -br link 看网卡 -> dhcpcd <网卡> -> ip -br addr 看地址" ;;
-        rescue_s4_keys)            echo "或者接网线/手机热点后重启。日志：9.自检 或监视页按 L。" ;;
+        rescue_s4_manual)          echo "手动：ip -br link 看网卡，再 dhcpcd" ;;
+        rescue_s4_keys)            echo "或接网线/热点后重启。看 8.自检。" ;;
         rescue_s4_shell_confirm)   echo "现在进入本地 root 命令行吗？" ;;
         rescue_auto_monitor)   echo "5 秒后自动进入监视页（按任意键立即进入）..." ;;
         rescue_lockfile) echo "存在锁定文件，远程访问被禁用，急救跳过。" ;;
@@ -2117,12 +2310,12 @@ t() {
         rescue_s2_retry_enter) echo "回车 = 从头再试" ;;
         rescue_s2_esc) echo "ESC  = 中止回主菜单" ;;
         rescue_s3_title) echo "第 3 步 | 本机开热点" ;;
-        rescue_s3_ask) echo "要让这台机器自己开热点，好让别的设备连上来吗？" ;;
+        rescue_s3_ask) echo "让这台机器开热点，别的设备能连上吗？" ;;
         rescue_s3_confirm) echo "开启本机热点？" ;;
         rescue_s3_started) echo "热点已启动。" ;;
         rescue_s3_fail) echo "启动失败：没有 hostapd，也没有 nmcli。" ;;
         rescue_s4_title) echo "第 4 步 | 兜底" ;;
-        rescue_s4_line1) echo "前几步都没成功，进入本地命令行手工处理。" ;;
+        rescue_s4_line1) echo "前几步没成功，进入本地命令行。" ;;
         rescue_s4_line2) echo "输入 exit 回到主菜单。" ;;
         net_no_wifi) echo "没有找到无线网卡。" ;;
         net_wpa_conf_fail) echo "无法写入 /tmp/wpa.conf" ;;
@@ -2148,7 +2341,7 @@ t() {
         net_ip_offline) echo "未连接" ;;
         net_no_networks) echo "没有扫描到任何网络。" ;;
         net_no_networks_hint) echo "R 重新扫描，M 手动输入 SSID。" ;;
-        net_nav_hint) echo "输入序号选择网络后按回车   M 手动输入 SSID   R 重新扫描" ;;
+        net_nav_hint) echo "序号回车选择   M 手动 SSID   R 重扫" ;;
         net_no_item_a) echo "没有第 " ;;
         net_no_item_b) echo " 项。" ;;
         net_rescanning) echo "重新扫描 ..." ;;
@@ -2172,11 +2365,35 @@ t() {
         pw_new_ssh_prompt) echo "输入新的 SSH 密码（ESC 取消）: " ;;
         pw_cancelled) echo "已取消。" ;;
         shell_title) echo "本地命令行" ;;
-        shell_text) echo "当前是 root shell。输入 exit 回到主菜单。" ;;
+        shell_text) echo "当前是 root shell。输入 exit 回菜单。" ;;
         shell_exit) echo "已退出命令行，返回主菜单。" ;;
         menu_confirm_reboot) echo "确定重启？" ;;
         menu_confirm_shutdown) echo "确定关机？" ;;
         pw_title)        echo "4. 密码文件" ;;
+        title_config) echo "配置" ;;
+        cfg_menu_view) echo "1. 查看当前配置" ;;
+        cfg_menu_edit) echo "2. 修改配置" ;;
+        cfg_menu_defaults) echo "3. 默认配置" ;;
+        cfg_edit_menu_items) echo "1. 逐项修改" ;;
+        cfg_edit_menu_direct) echo "2. 直接编辑文件（需确认）" ;;
+        cfg_direct_confirm) echo "直接编辑原始文件？写错会使配置失效。" ;;
+        cfg_menu_viewdef) echo "1. 查看默认值" ;;
+        cfg_menu_restore) echo "2. 恢复默认值（需确认）" ;;
+        title_usb) echo "U 盘位置" ;;
+        cfg_usb_save) echo "1. 保存到 U 盘" ;;
+        cfg_usb_choose) echo "2. 选择 U 盘位置" ;;
+        cfg_usb_none) echo "没有可写 U 盘，请先接上。" ;;
+        cfg_loaded_from) echo "已读取：" ;;
+        title_other) echo "其它" ;;
+        other_lang) echo "1. 语言" ;;
+        other_help) echo "2. 帮助" ;;
+        other_power) echo "3. 重启 / 关机" ;;
+        other_reboot) echo "1. 重启" ;;
+        other_shutdown) echo "2. 关机" ;;
+        confirm_again) echo "请再次确认" ;;
+        help_first) echo "不会用？按 A 进入急救模式（自动处理）" ;;
+        help_m6) echo "  E 其它：语言 / 帮助 / 重启 / 关机" ;;
+        cfg_location_label) echo "位置：" ;;
         *)               echo "$key" ;;
     esac
 }

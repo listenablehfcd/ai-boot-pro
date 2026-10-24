@@ -13,6 +13,14 @@
 #      只能靠再按一次键才退出，观感就是“按了 X 只是刷新了一下”。
 #   3) 刷新是 `"$0" --wifi` 递归调用自己，每刷一次多一层进程。
 #      现在改成循环，ESC 一下就能干净退出。
+#
+# 5.3 真机实测（第 3 条）修热点"假成功"：
+#   - 没有 dnsmasq / dnsmasq 起不来 → 明确报错并返回 1（原来 `|| true` 恒成功）
+#   - hostapd 成功但 DHCP 失败 → 回滚 hostapd，不留"看起来开了其实连不上"
+#   - 开热点前精确清掉占用网卡的 wpa_supplicant（不用宽泛 pkill -f）
+#   - 新增 ap_t()：AP 调试模式新增/调整的文案。common 的 t() 正被另一个
+#     agent 同时修改，为避免互相覆盖先放本文件；key 名与修复设计文档一致，
+#     之后可以原样并入 common 的 t() 两张表。
 # ============================================================
 set -u
 source /usr/local/bin/ai-boot-common.sh
@@ -192,9 +200,9 @@ wifi_connect() {
     } > "$conf" 2>/dev/null || { echo "$(t net_wpa_conf_fail)"; return 1; }
 
     ip link set "$iface" up 2>/dev/null || true
-    # 只清掉本网卡上的旧实例，不要 pkill 掉别人的
-    pkill -f "wpa_supplicant.*-i *$iface" 2>/dev/null || true
-    sleep 1
+    # 只清掉本网卡上的旧实例：精确挑 comm=wpa_supplicant 且参数带该网卡的
+    # 进程（stop_wpa_on_iface），不用 `pkill -f wpa_supplicant` 那种宽泛匹配。
+    stop_wpa_on_iface "$iface"
 
     if ! command -v wpa_supplicant >/dev/null 2>&1; then
         echo "$(t net_no_wpa)"
@@ -255,7 +263,8 @@ wifi_connect_flow() {
 }
 
 # ============================================================
-# 热点（保留 4.0 能力，SSID/密码可由配置指定）
+# 热点（AP 调试模式的核心）
+# SSID/密码可由配置指定；开热点前会先精确清掉占网卡的 wpa_supplicant。
 # ============================================================
 gen_hotspot_name() { tr -dc 'a-z0-9' < /dev/urandom 2>/dev/null | head -c 8; }
 gen_hotspot_pass() { tr -dc 'a-z0-9' < /dev/urandom 2>/dev/null | head -c 12; }
@@ -271,26 +280,228 @@ hotspot_pass() {
     printf '%s\n' "$p"
 }
 
-# 热点侧发地址：有 dnsmasq 就用它，没有就明确说清"设备要手动配 IP"。
-# 4.1 从头到尾没给热点接口配过地址，设备就算连上也拿不到 IP、连不上 SSH。
-start_hotspot_dhcp() {
-    local iface="$1"
-    if command -v dnsmasq >/dev/null 2>&1; then
-        command -v pkill >/dev/null 2>&1 && pkill -f "dnsmasq.*$iface" 2>/dev/null || true
-        dnsmasq --interface="$iface" --bind-interfaces \
-                --dhcp-range=192.168.66.10,192.168.66.200,12h \
-                >/dev/null 2>&1 || true
-    else
-        echo "$(t net_no_dnsmasq)"
+# ------------------------------------------------------------
+# AP 调试模式的新增/调整文案（中英各一份，key 名与修复设计文档一致）
+#
+# 为什么不写进 ai-boot-common.sh 的 t()：
+#   那个文件此刻正被"设置页重构"的 agent 同时修改，两个 agent 写同一张
+#   中英表必然互相覆盖。这里先用一个独立的小表，和 t() 共用同一个
+#   AI_BOOT_LANG；等 common 空出来后，把下面这些 key 原样并入 t() 两表即可。
+# 字体约束：中文字形只剩 2 个槽位，下面所有中文都只用了已存在的字。
+# ------------------------------------------------------------
+ap_t() {
+    local key="$1"
+    if [ "${AI_BOOT_LANG:-en}" = "zh" ]; then
+        case "$key" in
+            rescue_ap_title)      printf '%s' "最后一步 | 本机开热点" ;;
+            rescue_ap_starting)   printf '%s' "正在开启热点，请稍等…" ;;
+            rescue_ap_join)       printf '%s' "本机将开启 WiFi 热点。" ;;
+            rescue_ap_join2)      printf '%s' "请用另一台设备连接后远程登录。" ;;
+            rescue_ap_skip)       printf '%s' "10 秒内按 ESC 可跳过。" ;;
+            rescue_ap_skip_to)    printf '%s' "跳过将进入本地指引页。" ;;
+            rescue_ap_skip2)      printf '%s' "已跳过热点，进入本地指引页。" ;;
+            rescue_ap_countdown)  printf '%s' "自动开启倒计时" ;;
+            rescue_ap_to_guide)   printf '%s' "无法开启热点，进入本地指引页。" ;;
+            rescue_ap_fail)       printf '%s' "热点启动失败。" ;;
+            net_no_hostapd)       printf '%s' "缺少 hostapd 和 nmcli。" ;;
+            net_ap_dnsmasq_fail)  printf '%s' "dnsmasq 失败，设备拿不到地址。" ;;
+            rescue_s4_title)      printf '%s' "第 4 步 | 本地指引（没网时）" ;;
+            rescue_s4_line1)      printf '%s' "前几步都没成功，也没有网络。" ;;
+            rescue_s4_line2)      printf '%s' "本页会一直显示，不需要按键。" ;;
+            rescue_s4_hint)       printf '%s' "按 5 进命令行，ESC 回主菜单。" ;;
+            net_no_dnsmasq)       printf '%s' "缺少 dnsmasq，热点发不了地址。" ;;
+            *) : ;;
+        esac
+        return 0
     fi
+    case "$key" in
+        rescue_ap_title)      printf '%s' "Step 5 | Last step: open a hotspot on this machine" ;;
+        rescue_ap_starting)   printf '%s' "Opening the hotspot, please wait..." ;;
+        rescue_ap_join)       printf '%s' "This machine will open a WiFi hotspot." ;;
+        rescue_ap_join2)      printf '%s' "Join it from another device, then log in remotely." ;;
+        rescue_ap_skip)       printf '%s' "Press ESC within 10 seconds to skip." ;;
+        rescue_ap_skip_to)    printf '%s' "Skipping goes to the local guide page." ;;
+        rescue_ap_skip2)      printf '%s' "Hotspot skipped. Going to the local guide page." ;;
+        rescue_ap_countdown)  printf '%s' "Auto start in" ;;
+        rescue_ap_to_guide)   printf '%s' "Cannot start the hotspot. Going to the local guide page." ;;
+        rescue_ap_fail)       printf '%s' "Hotspot start failed." ;;
+        net_no_hostapd)       printf '%s' "hostapd and nmcli are both missing." ;;
+        net_ap_dnsmasq_fail)  printf '%s' "dnsmasq failed: devices cannot get an address." ;;
+        rescue_s4_title)      printf '%s' "Step 4 | Local guide (no network)" ;;
+        rescue_s4_line1)      printf '%s' "The earlier steps failed and there is no network." ;;
+        rescue_s4_line2)      printf '%s' "This page stays; no key is needed." ;;
+        rescue_s4_hint)       printf '%s' "Press 5 for a root shell, ESC = back to menu." ;;
+        net_no_dnsmasq)       printf '%s' "dnsmasq is missing: the hotspot cannot hand out addresses." ;;
+        *) : ;;
+    esac
     return 0
 }
 
+# 热点固定地址 / 运行文件（/tmp 在 live 系统里可写，重启即清）
+HOTSPOT_IP="192.168.66.1"
+HOSTAPD_PID="/tmp/aiboot-hostapd.pid"
+HOSTAPD_ERR="/tmp/hostapd.err"
+DNSMASQ_PID="/tmp/aiboot-dnsmasq.pid"
+DNSMASQ_ERR="/tmp/aiboot-dnsmasq.err"
+
+# 热点组件预检：缺哪几项就打印哪几行（每行一条）。
+# 返回 0 = 组件齐全；1 = 有缺失（缺失原因已经打印到 stdout）。
+hotspot_missing() {
+    local missing=0
+    if [ -z "$(wifi_iface 2>/dev/null || true)" ]; then
+        printf '%s\n' "$(t net_no_wifi)"
+        missing=1
+    fi
+    if ! command -v hostapd >/dev/null 2>&1 && ! command -v nmcli >/dev/null 2>&1; then
+        printf '%s\n' "$(ap_t net_no_hostapd)"
+        missing=1
+    fi
+    if ! command -v dnsmasq >/dev/null 2>&1; then
+        printf '%s\n' "$(ap_t net_no_dnsmasq)"
+        missing=1
+    fi
+    return "$missing"
+}
+
+# 精确清掉占用某张网卡的 wpa_supplicant。
+# 不能用 `pkill -f wpa_supplicant`：命令名太常见，会误杀别的网卡/别人
+# 正在用的连接。做法：pgrep -a 拿到 pid+完整命令行，comm 必须是
+# wpa_supplicant 且参数里带 -i <iface> 才 kill。
+stop_wpa_on_iface() {
+    local iface="$1" line pid args
+    [ -n "$iface" ] || return 0
+    if command -v pgrep >/dev/null 2>&1; then
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            pid="${line%% *}"
+            args="${line#* }"
+            case " $args " in
+                *" -i $iface "*|*" -i$iface "*|*" -i $iface"|*" -i$iface")
+                    kill "$pid" 2>/dev/null || true ;;
+            esac
+        done < <(pgrep -a wpa_supplicant 2>/dev/null || true)
+    fi
+    sleep 1
+    return 0
+}
+
+# 只 kill comm 对得上的 pid：pid 文件可能是上一轮留下的，pid 也可能被系统复用，
+# 不核对进程名就 kill 有误杀别的进程的风险。
+kill_comm() {
+    local pid="$1" want="$2" comm
+    [ -n "$pid" ] || return 0
+    comm="$(cat "/proc/$pid/comm" 2>/dev/null || true)"
+    [ "$comm" = "$want" ] || return 0
+    kill "$pid" 2>/dev/null || true
+    return 0
+}
+
+# 精确停掉本网卡上的旧 dnsmasq（同上，不用宽泛 pkill -f）
+stop_dnsmasq_on_iface() {
+    local iface="$1" line pid args
+    [ -n "$iface" ] || return 0
+    if [ -f "$DNSMASQ_PID" ]; then
+        kill_comm "$(cat "$DNSMASQ_PID" 2>/dev/null || true)" dnsmasq
+        rm -f "$DNSMASQ_PID" 2>/dev/null || true
+    fi
+    if command -v pgrep >/dev/null 2>&1; then
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            pid="${line%% *}"
+            args="${line#* }"
+            case " $args " in
+                *"--interface=$iface "*|*"--interface $iface "*)
+                    kill "$pid" 2>/dev/null || true ;;
+            esac
+        done < <(pgrep -a dnsmasq 2>/dev/null || true)
+    fi
+    sleep 1
+    return 0
+}
+
+# 停掉我们起的 hostapd（失败回滚 / 重新开启时用）。
+# 只认 pid 文件 + argv 里带本模块配置文件的进程，不 pkill -f 误杀别的热点。
+stop_hostapd() {
+    local pid argv
+    if [ -f "$HOSTAPD_PID" ]; then
+        kill_comm "$(cat "$HOSTAPD_PID" 2>/dev/null || true)" hostapd
+        rm -f "$HOSTAPD_PID" 2>/dev/null || true
+    fi
+    if command -v pgrep >/dev/null 2>&1; then
+        for pid in $(pgrep -x hostapd 2>/dev/null || true); do
+            argv="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+            case " $argv " in
+                *hostapd.conf*) kill "$pid" 2>/dev/null || true ;;
+            esac
+        done
+    fi
+    sleep 1
+    return 0
+}
+
+# dnsmasq 退出码 0 只代表它认为自己起来了，不代表 DHCP 真的在服务：
+# 端口被占 / 绑定失败这类错误发生在 daemon 化之后，光看退出码会漏。
+# 这里核对 UDP 67 端口真的在监听（ss → netstat → 没有工具就只能信退出码）。
+dhcp_server_listening() {
+    if command -v ss >/dev/null 2>&1; then
+        ss -lun 2>/dev/null | grep -Eq ':(67)[[:space:]]'
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -lun 2>/dev/null | grep -Eq ':(67)[[:space:]]'
+    else
+        return 0
+    fi
+}
+
+# 热点侧发地址（DHCP）。
+# 真机实测第 3 条的根因之一：这里原来是 `dnsmasq ... || true` + `return 0`，
+# dnsmasq 根本没起来也显示"热点已启动"，另一台设备连上来拿不到 IP。
+# 现在：没有 dnsmasq / 启动失败 / 67 端口没监听 → 都如实返回 1 并说明原因。
+start_hotspot_dhcp() {
+    local iface="$1" rc=0 i=0
+    [ -n "$iface" ] || return 1
+    if ! command -v dnsmasq >/dev/null 2>&1; then
+        echo "$(ap_t net_no_dnsmasq)"
+        return 1
+    fi
+    stop_dnsmasq_on_iface "$iface"
+    rm -f "$DNSMASQ_PID" 2>/dev/null || true
+    # --port=0：只发 DHCP，不做 DNS 解析。镜像里没有别的 DNS 服务，关掉 53
+    # 端口可以让 dnsmasq 少一个"端口被占就整个退出"的失败面。
+    dnsmasq --port=0 --interface="$iface" --bind-interfaces \
+            --dhcp-range=192.168.66.10,192.168.66.200,12h \
+            --dhcp-leasefile=/tmp/aiboot-dnsmasq.leases \
+            --pid-file="$DNSMASQ_PID" \
+            >"$DNSMASQ_ERR" 2>&1
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "$(ap_t net_ap_dnsmasq_fail)"
+        tail -n 3 "$DNSMASQ_ERR" 2>/dev/null || true
+        stop_dnsmasq_on_iface "$iface"
+        return 1
+    fi
+    while [ "$i" -lt 6 ]; do
+        dhcp_server_listening && return 0
+        sleep 0.5
+        i=$((i + 1))
+    done
+    echo "$(ap_t net_ap_dnsmasq_fail)"
+    tail -n 3 "$DNSMASQ_ERR" 2>/dev/null || true
+    # 进程可能还在但没在 67 端口服务（端口被占/绑定失败），清掉再回滚
+    stop_dnsmasq_on_iface "$iface"
+    return 1
+}
+
+# 开热点。成功返回 0；失败返回 1 并把真因打在屏幕上（hostapd.err 末 5 行）。
+# 顺序：清 wpa_supplicant → 配地址 → 起 hostapd → 起 DHCP；
+# DHCP 失败要把 hostapd 回滚掉，不留"看起来开了其实连不上"。
 start_pc_hotspot() {
     local ssid="$1" pass="$2"
-    local iface
-    iface="$(wifi_iface || true)"
-    [ -z "$iface" ] && return 1
+    local iface hpid
+    iface="$(wifi_iface 2>/dev/null || true)"
+    if [ -z "$iface" ]; then
+        echo "$(t net_no_wifi)"
+        return 1
+    fi
 
     # WPA2 要求口令至少 8 位；短口令 hostapd 会直接启动失败
     if [ "${#pass}" -lt 8 ]; then
@@ -298,12 +509,17 @@ start_pc_hotspot() {
         return 1
     fi
 
+    # hostapd 与 wpa_supplicant 抢同一张网卡：先把占用它的 wpa_supplicant
+    # 精确停掉，否则 hostapd 会因接口还处于站点模式而退出。
+    stop_wpa_on_iface "$iface"
+
     # 先给热点接口一个固定地址，并清掉可能残留的旧地址/旧关联
     ip addr flush dev "$iface" 2>/dev/null || true
-    ip addr add 192.168.66.1/24 dev "$iface" 2>/dev/null || true
+    ip addr add "$HOTSPOT_IP/24" dev "$iface" 2>/dev/null || true
     ip link set "$iface" up 2>/dev/null || true
 
     if command -v hostapd >/dev/null 2>&1; then
+        stop_hostapd
         cat > /tmp/hostapd.conf 2>/dev/null <<EOF2
 interface=$iface
 ssid=$ssid
@@ -315,34 +531,51 @@ wpa_key_mgmt=WPA-PSK
 rsn_pairwise=CCMP
 driver=nl80211
 EOF2
-        command -v pkill >/dev/null 2>&1 && pkill -f "hostapd.*hostapd.conf" 2>/dev/null || true
-        # 关键修复：4.1 完全不看退出码，hostapd 起不来也照样报"热点已启动"。
-        if hostapd -B /tmp/hostapd.conf 2>/tmp/hostapd.err; then
-            sleep 1
-            if command -v pgrep >/dev/null 2>&1; then
-                if pgrep -f "hostapd.*hostapd.conf" >/dev/null 2>&1; then
-                    start_hotspot_dhcp "$iface"
-                    return 0
-                fi
-            else
-                # 没有 procps 时无法核对进程，只能以退出码为准
-                start_hotspot_dhcp "$iface"
-                return 0
-            fi
+        if ! hostapd -B -P "$HOSTAPD_PID" /tmp/hostapd.conf 2>"$HOSTAPD_ERR"; then
+            echo "$(t net_hostapd_fail)"
+            tail -n 5 "$HOSTAPD_ERR" 2>/dev/null || true
+            stop_hostapd
+            return 1
         fi
-        echo "$(t net_hostapd_fail)"
-        tail -n 5 /tmp/hostapd.err 2>/dev/null || true
+        sleep 1
+        # 优先核对 pid 文件里的进程在跑（最可靠）；没有 pid 文件时退回按进程名查。
+        hpid=""
+        [ -r "$HOSTAPD_PID" ] && hpid="$(cat "$HOSTAPD_PID" 2>/dev/null || true)"
+        if [ -n "$hpid" ] && kill -0 "$hpid" 2>/dev/null; then
+            :
+        elif command -v pgrep >/dev/null 2>&1 && pgrep -x hostapd >/dev/null 2>&1; then
+            :
+        else
+            echo "$(t net_hostapd_fail)"
+            tail -n 5 "$HOSTAPD_ERR" 2>/dev/null || true
+            stop_hostapd
+            return 1
+        fi
+        if start_hotspot_dhcp "$iface"; then
+            return 0
+        fi
+        # hostapd 开了但 DHCP 没起来：设备能连上却拿不到 IP、连不上 SSH。
+        # 留着只会让人以为"热点可用"，所以回滚 hostapd，如实报失败。
+        stop_hostapd
+        ip addr flush dev "$iface" 2>/dev/null || true
         return 1
     fi
 
     if command -v nmcli >/dev/null 2>&1; then
-        if nmcli dev wifi hotspot ifname "$iface" ssid "$ssid" password "$pass"; then
-            start_hotspot_dhcp "$iface"
+        if ! nmcli dev wifi hotspot ifname "$iface" ssid "$ssid" password "$pass"; then
+            echo "$(t net_nmcli_fail)"
+            return 1
+        fi
+        if start_hotspot_dhcp "$iface"; then
             return 0
         fi
-        echo "$(t net_nmcli_fail)"
+        # 同样回滚：不让界面显示"热点已启动"却没有 DHCP
+        nmcli connection down Hotspot >/dev/null 2>&1 \
+            || nmcli dev disconnect "$iface" >/dev/null 2>&1 || true
         return 1
     fi
+
+    echo "$(ap_t net_no_hostapd)"
     return 1
 }
 

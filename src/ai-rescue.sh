@@ -25,6 +25,15 @@
 #   - 起 sshd 后真的检查是否在监听，失败说清楚
 #   - 手机热点改成"扫描 → 选你的手机 → 输密码"，不再要求用户把手机热点改名
 #   - 连上后不等按键，自动进监视页（现场可能没有键盘）
+#
+# 5.3 真机实测（第 3 条）修热点 AP 调试模式：
+#   - 进 AP 前先预检：缺无线网卡 / 缺 hostapd+nmcli / 缺 dnsmasq 都逐条说明，
+#     原因打屏 + 等 8 秒 → 本地指引页，**不开热点**
+#   - 开热点前必须有确认屏：SSID/密码/本机 IP + 10 秒内按 ESC 可跳过
+#   - 失败报真因（hostapd.err 末 5 行 / dnsmasq 失败原因），不再假装成功
+#   - 自动流程的出口只有两个：监视页（成功）/ 本地指引页（失败或跳过）；
+#     本地指引页**不再自动进 root shell**（用户按 Y 以为是"继续"，结果进
+#     黑框命令行只能长按电源 —— 这是真机实测里最伤人的一处）
 # ============================================================
 set -u
 source /usr/local/bin/ai-boot-common.sh
@@ -196,44 +205,169 @@ auto_step_phone_hotspot() {
     return 1
 }
 
+# ------------------------------------------------------------
+# 热点 AP 调试模式（真机实测第 3 条）
+#
+# 原来的问题：自动流程走到这一步会**自己**进 AP，屏幕没说清要干什么、
+# 也没有跳过机会；组件不全时还一路假装成功。
+# 现在分三段：
+#   1) 预检：缺无线网卡 / hostapd+nmcli / dnsmasq → 逐条说清 + 等 8 秒
+#      → 本地指引页，**不开热点**；
+#   2) 确认屏：说明要开热点，显示 SSID/密码/本机 IP，10 秒内按 ESC 可跳过；
+#   3) 确认后才真开：成功 → 监视页；失败 → 真因 + 本地指引页。
+# 自动流程的出口因此只有两个：监视页（成功）/ 本地指引页（失败或跳过）。
+# ------------------------------------------------------------
+
+# 预检屏：返回 0 = 可以开热点；1 = 缺组件（原因已打屏，等过 8 秒）
+rescue_ap_precheck() {
+    local reasons line
+    reasons="$(hotspot_missing 2>/dev/null || true)"
+    [ -n "$reasons" ] || return 0
+    clear
+    ui_title "$(ap_t rescue_ap_title)"
+    while IFS= read -r line; do
+        [ -n "$line" ] && ui_line "$line"
+    done <<< "$reasons"
+    ui_rule
+    ui_line "$(ap_t rescue_ap_to_guide)"
+    ui_wait_key 8
+    return 1
+}
+
+# 确认屏：返回 0 = 现在开热点；1 = 用户按 ESC 跳过
+rescue_ap_confirm() {
+    local ssid="$1" pass="$2" i=0 c
+    clear
+    ui_title "$(ap_t rescue_ap_title)"
+    ui_line "$(ap_t rescue_ap_join)"
+    ui_line "$(ap_t rescue_ap_join2)"
+    ui_rule
+    ui_line "$(t rescue_ssid_label)$ssid"
+    ui_line "$(t rescue_pass_label)$pass"
+    ui_line "$(t ssh_ip): $HOTSPOT_IP"
+    ui_rule
+    ui_line "$(ap_t rescue_ap_skip)"
+    ui_line "$(ap_t rescue_ap_skip_to)"
+    while [ "$i" -lt 10 ]; do
+        printf '\r%s %2d s ' "$(ap_t rescue_ap_countdown)" "$((10 - i))"
+        c="$(read_choice 0 1 1)"
+        case "$c" in
+            ESC|CH:X|CH:x) printf '\n'; return 1 ;;
+            TIMEOUT|'') : ;;
+            *) printf '\n'; return 0 ;;   # 任意键 = 现在就开始
+        esac
+        i=$((i + 1))
+    done
+    printf '\n'
+    return 0
+}
+
 auto_step_pc_hotspot() {
     local ssid pass
     cfg_is_on hotspot_enabled || return 1
     ssid="$(hotspot_ssid)"; pass="$(hotspot_pass)"
-    auto_screen "$(t rescue_step5)" "$(t rescue_s3_title)" "$(t rescue_s3_starting)"
-    if start_pc_hotspot "$ssid" "$pass"; then
-        clear
-        ui_title "$(t rescue_s3_started)"
-        ui_line "$(t rescue_ssid_label)$ssid"
-        ui_line "$(t rescue_pass_label)$pass"
-        ui_rule
-        ui_line "$(t rescue_s3_join_hint)"
-        sleep 4
-        rescue_bring_up_ssh
+
+    # 1) 预检：缺组件就明说原因 + 等 8 秒 → 本地指引页，不开热点
+    if ! rescue_ap_precheck; then
+        rescue_guide_page
         return 0
     fi
-    auto_screen "$(t rescue_step5)" "$(t rescue_s3_title)" "$(t rescue_s3_fail)"
-    sleep 3
-    return 1
+
+    # 2) 确认屏：告诉用户要开热点；10 秒内 ESC 跳过
+    if ! rescue_ap_confirm "$ssid" "$pass"; then
+        clear
+        ui_title "$(ap_t rescue_ap_title)"
+        ui_line "$(ap_t rescue_ap_skip2)"
+        ui_wait_key 3
+        rescue_guide_page
+        return 0
+    fi
+
+    # 3) 真开热点。期间把 SSID/密码/IP 一直留在屏上，方便拍照
+    clear
+    ui_title "$(ap_t rescue_ap_title)"
+    ui_line "$(ap_t rescue_ap_starting)"
+    ui_rule
+    ui_line "$(t rescue_ssid_label)$ssid"
+    ui_line "$(t rescue_pass_label)$pass"
+    ui_line "$(t ssh_ip): $HOTSPOT_IP"
+
+    if ! start_pc_hotspot "$ssid" "$pass"; then
+        # 真因已经由 ai-network.sh 打在屏上（hostapd.err 末 5 行等）
+        ui_rule
+        ui_line "$(ap_t rescue_ap_to_guide)"
+        ui_wait_key 8
+        rescue_guide_page
+        return 0
+    fi
+
+    # 成功：热点信息放一屏 → 起 SSH → 监视页（现场可能没有键盘，不按键）
+    clear
+    ui_title "$(ap_t rescue_ap_title)"
+    ui_line "$(t rescue_s3_started)"
+    ui_rule
+    ui_line "$(t rescue_ssid_label)$ssid"
+    ui_line "$(t rescue_pass_label)$pass"
+    ui_line "$(t ssh_ip): $HOTSPOT_IP"
+    ui_rule
+    ui_line "$(ap_t rescue_ap_join2)"
+    sleep 4
+    rescue_bring_up_ssh
+    return 0
 }
 
-# 全部失败：给"本地指引页"，**不把用户丢进 shell**（按 5 并确认才进）
-rescue_guide_page() {
+# ------------------------------------------------------------
+# 本地指引页：自动流程的**终点**，不是 shell 入口（真机实测第 3/7 条）
+#
+# 旧行为（必须改掉）：等 10 秒后**无条件**把用户丢进 root shell ——
+#   没键盘的用户看到一个黑框命令行只能长按电源；有键盘的用户按 Y 以为
+#   是"继续"，结果也进了命令行。
+# 新行为：
+#   * 没有键盘：本页一直停着（带超时的 read_choice 循环，不重绘、不空转）
+#   * ESC：回主菜单
+#   * 只有显式按 5 并再按 Y 确认，才进 ai-shell.sh；从 shell exit 回来
+#     仍然回到本页（不会一路掉回主菜单或别的界面）
+# ------------------------------------------------------------
+rescue_guide_draw() {
     clear
-    ui_title "$(t rescue_s4_title)"
-    ui_line "$(t rescue_s4_line1)"
-    ui_line "$(t rescue_s4_line2)"
+    ui_title "$(ap_t rescue_s4_title)"
+    ui_line "$(ap_t rescue_s4_line1)"
+    ui_line "$(ap_t rescue_s4_line2)"
     ui_rule
     ui_line "$(t rescue_s4_manual)"
     ui_line "$(t rescue_s4_keys)"
     ui_rule
-    # 急救模式的目标场景就是"没有键盘"。这一页必须能自己走下去：
-    # 等 10 秒；有键按下且是 ESC 才回主菜单，否则自动进入命令行。
-    if ui_wait_key 10; then
-        [ "${UI_KEY:-}" = "ESC" ] && return 0
-    fi
-    /usr/local/bin/ai-shell.sh
-    return 0
+    ui_line "$(ap_t rescue_s4_hint)"
+}
+
+rescue_guide_page() {
+    local c
+    rescue_guide_draw
+    while true; do
+        # 10 秒超时的循环：无键盘时每一轮只是继续等，不重画、不空转。
+        c="$(read_choice 0 1 10)"
+        case "$c" in
+            ESC|CH:X|CH:x|EOF)
+                return 0 ;;
+            NUM:5|CH:5)
+                echo
+                ui_line "$(t rescue_s4_shell_confirm)"
+                printf '> '
+                # 确认也带超时：10 秒没按 Y/N 就当"不"，不让用户又卡在按键上
+                c="$(read_choice 0 1 10)"
+                case "$c" in
+                    CH:Y|CH:y)
+                        /usr/local/bin/ai-shell.sh
+                        # 从 shell 回来：重绘本页，继续停在这里
+                        rescue_guide_draw
+                        ;;
+                esac
+                ;;
+            TIMEOUT|'')
+                # 无键盘 / 没按键：保持本页不动
+                : ;;
+        esac
+    done
 }
 
 rescue_auto() {
@@ -289,26 +423,38 @@ guided_phone_hotspot() {
 }
 
 guided_pc_hotspot() {
-    local ssid pass
+    local ssid pass reasons line
     ssid="$(hotspot_ssid)"; pass="$(hotspot_pass)"
     clear
     ui_title "$(t rescue_s3_title)"
+    # 组件预检：缺组件就别跑到一半才失败，先把原因说清楚
+    reasons="$(hotspot_missing 2>/dev/null || true)"
+    if [ -n "$reasons" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] && ui_line "$line"
+        done <<< "$reasons"
+        ui_rule
+        press_any_key "$(t press_any)" || true
+        return 1
+    fi
     ui_line "$(t rescue_s3_ask)"
     ui_line "$(t rescue_ssid_label)$ssid"
     ui_line "$(t rescue_pass_label)$pass"
+    ui_line "$(t ssh_ip): $HOTSPOT_IP"
     ui_nav
     if ! confirm "$(t rescue_s3_confirm)"; then
         return 1
     fi
     if start_pc_hotspot "$ssid" "$pass"; then
         ui_line "$(t rescue_s3_started)"
-        ui_line "$(t rescue_s3_join_hint)"
+        ui_line "$(ap_t rescue_ap_join2)"
         ui_rule
         press_any_key "$(t press_any)" || true
         rescue_bring_up_ssh
         return 0
     fi
-    ui_line "$(t rescue_s3_fail)"
+    # 真因已经由 ai-network.sh 打在屏上（hostapd.err 末 5 行 / dnsmasq 原因）
+    ui_line "$(ap_t rescue_ap_fail)"
     ui_rule
     press_any_key "$(t press_any)" || true
     return 1

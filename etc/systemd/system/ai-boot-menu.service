@@ -1,5 +1,5 @@
 [Unit]
-Description=AI Boot Pro 1.3 Main Menu
+Description=AI Boot Pro 1.5 Main Menu
 # 不能写 After=multi-user.target：它自己被 multi-user.target 拉起，会形成 ordering cycle，
 # 某些时序下 systemd 会丢掉这个 job → 进了系统但没有菜单（现场故障）。
 After=systemd-user-sessions.service getty.target
