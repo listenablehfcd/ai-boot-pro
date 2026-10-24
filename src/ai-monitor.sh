@@ -36,10 +36,11 @@ ssh_running() {
 }
 
 ai_online() {
-    local u
-    u="$(ai_user_name)"
-    command -v pgrep >/dev/null 2>&1 || return 1
-    pgrep -f "sshd: $u" >/dev/null 2>&1
+    # 版本无关：有已建连接 或 有登录会话，即视为在线。
+    # （不能用 pgrep -f "sshd: $user"：OpenSSH >= 9.8 的进程名是 sshd-session）
+    [ "$(ai_ssh_conn_count 2>/dev/null || echo 0)" -gt 0 ] && return 0
+    [ -n "$(ai_sessions 2>/dev/null || true)" ] && return 0
+    return 1
 }
 
 show_monitor_page() {
@@ -72,7 +73,7 @@ show_monitor_page() {
         [ -n "$line" ] || continue
         ui_line "  $line"
         found=1
-    done < <(who 2>/dev/null | grep -E 'pts|tty' || true)
+    done < <(ai_sessions 2>/dev/null || true)
     [ "$found" = "0" ] && ui_line "$(t mon_none)"
     ui_blank
     ui_line "$(t mon_pause)$([ -f "$PAUSE_FILE" ] && echo "$(t mon_paused)" || echo "$(t mon_notpaused)")"
@@ -107,7 +108,7 @@ emergency_stop() {
     if command -v systemctl >/dev/null 2>&1; then
         systemctl stop ssh 2>/dev/null || systemctl stop sshd 2>/dev/null || true
     fi
-    command -v pkill >/dev/null 2>&1 && { pkill -f 'sshd:' 2>/dev/null || true; }
+    ai_kill_sessions >/dev/null 2>&1 || true
     log "EMERGENCY STOP: sessions killed, ssh stopped, marker=$marker"
     return 0
 }
@@ -125,8 +126,7 @@ clear_estop() {
 kill_ai_session() {
     local u pids
     u="$(ai_user_name)"
-    command -v pgrep >/dev/null 2>&1 || { echo "$(t mon_nosession)"; return 0; }
-    pids="$(pgrep -f "sshd: $u" 2>/dev/null || true)"
+    pids="$(ai_kill_sessions 2>/dev/null || true)"
     if [ -n "$pids" ]; then
         kill $pids 2>/dev/null || true
         echo "$(t mon_killed_a)$(echo "$pids" | wc -w)$(t mon_killed_b)"
@@ -210,7 +210,7 @@ run_monitor() {
                 /bin/bash -l || true
                 press_any_key "$(t press_any)" || return 0
                 ;;
-            CH:0)
+            NUM:0|CH:0)
                 if [ -f "$(cfg_get ai_estop_file)" ]; then
                     if confirm "$(t mon_clear_confirm)"; then
                         clear_estop

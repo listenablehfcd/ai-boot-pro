@@ -1,36 +1,79 @@
-# AI-Boot 5.2 配置文件逐项说明
+# AI-Boot 配置文件逐项说明
 #
-# 位置（按优先级）：
-#   <U盘>/AI-Boot/ai-boot.conf     U 盘可写时用它（重启后还在）
-#   <U盘>/AI-Boot/ai-boot.conf     U 盘只读时只读它（改动不会保存）
-#   /run/ai-boot/ai-boot.conf      找不到 U 盘时的兜底（内存，重启即失）
+# 本文档对应的键集合与 /usr/local/bin/ai-boot-common.sh 里的
+# CFG_KEYS / CFG_DEFAULT 完全一致（tests/check_consistency.sh 会逐键核对）。
+#
+# ============================================================
+# 一、文件放在哪、什么时候生效
+# ============================================================
+# 程序启动时会自动找配置文件，按下面的顺序用第一个找到的：
+#   <U盘>/AI-Boot/ai-boot.conf    推荐布局（目录可写时改动会保存）
+#   <U盘>/ai-boot.conf            根目录布局（Ventoy 数据分区常见）
+#   /run/ai-boot/ai-boot.conf     找不到 U 盘时的兜底（内存，重启即失）
+#
+# 找 U 盘时会先自动挂载可移动分区：本镜像没有 udisks/gvfs 之类的自动挂载，
+# 所以程序自己把“可移动、有普通文件系统、还没挂载”的分区挂到
+# /run/media/<分区名>，然后再到这些挂载点里找上面的文件。
+# 因此第二只 U 盘、Ventoy 数据分区现在都能被找到（插上后进入任一子界面、
+# 或重新进一次配置页，就会重新扫描并读取）。
+#
+# 会被自动跳过的设备（安全红线）：
+#   * 正在用的根文件系统 / Live 启动介质所在的整盘（病人系统盘）
+#   * squashfs / iso9660 / udf 等只读镜像分区
+#   * swap / LUKS / LVM / RAID 成员
 #
 # 格式：键=值，每行一个，# 开头是注释。值前后的空格会被去掉。
-# 改完不用重启，主菜单里换个界面再回来就会重读。
+# 改完不用重启：主菜单里换个界面再回来就会重新读取。
 #
-# 下面是每个键到底被谁用了。4.0 的问题就是这里有 20 个键，
-# 实际只有 wifi_ssid / wifi_password 两个有人读，其余全是摆设。
+# ============================================================
+# 二、持久化：配置到底能不能存下来
+# ============================================================
+# 关键事实：用 dd 写入 U 盘的启动盘是只读的 ISO9660，程序**无法**把配置
+# 写回启动盘。这时配置只能在内存里生效，重启就没了 —— 屏幕和主菜单底部
+# 都会明确提示“配置位置只读 / 改动不会保存”。
+#
+# 想真正持久保存，用下面任一办法：
+#   1) Ventoy 做的 U 盘：它有一个可写的 exFAT 数据分区，把配置放到
+#      <数据分区>/AI-Boot/ai-boot.conf（或直接 <数据分区>/ai-boot.conf），
+#      程序会自动挂载该分区并读写这份配置。
+#   2) 第二只普通 U 盘：格式化成一个普通文件系统（vfat/exfat/ntfs/ext4/
+#      f2fs 等），在里面建 AI-Boot 目录放 ai-boot.conf。插上后程序会自动
+#      挂载它；也可以在“单独配置 → E 逐项编辑”页按 O，选“保存到可写磁盘”。
+#   3) 只读配置位置的逃逸口：E（逐项编辑）页和 G（原始文件）页在只读位置
+#      会显示提示，按 O 可以把当前内存里的配置另存到任意可写磁盘。
+#      另存成功后，下次启动会自动优先读那只盘上的配置。
+#
+# 只读/内存两种情况都会在界面上明说，不会假装保存成功。
+#
+# ============================================================
+# 三、每个键到底被谁用了
+# ============================================================
+# 下面每个键都真的被某个脚本读过；值就是内置默认值。
+# 想改默认值请改 ai-boot-common.sh 的 CFG_DEFAULT，不是本文档。
+# 手工配置时可以直接复制 ai-boot.conf.default 再修改。
 
 auto_config=1
-#   急救模式第 1 步的总开关。
+#   急救模式第 1 步的总开关：是否读本配置联网。
 #   0 = 第 1 步直接跳过（不读本文件联网）
-#   1 = 启用
-#   读它的地方：ai-rescue.sh phase1_config_network()
+#   1 = 启用（再用下面的 wifi_* / wired_dhcp / static_* 联网）
+#   读它的地方：ai-rescue.sh auto_step_config()
 
 auto_save=1
 #   改配置后是否自动写回本文件。
-#   0 = 只改内存，重启还原
-#   1 = 每次改动都落盘
+#   0 = 只改内存，重启还原；1 = 每次改动都落盘。
+#   例外：改 auto_save 这个键本身一定会落盘，否则“关掉自动保存”这个
+#   动作自己存不下来，下次又变回 1。
 #   读它的地方：ai-boot-common.sh cfg_set()
 
 lang=en
 #   界面语言。en / zh。
-#   目前 zh 只翻主界面、按键提示和配置界面，子界面仍是英文
-#   （AI-README 明确要求日志用英文）。这是有意为之，不是漏翻。
+#   只有配置文件本来就存在时，切换语言才会更新这里的 lang；
+#   配置文件不存在时只记语言选择，不会凭空创建配置文件。
+#   读它的地方：ai-boot-common.sh reload_language()
 
 wifi_auto_connect=1
 #   急救第 1 步是否用下面的 wifi_ssid 自动联网。
-#   读它的地方：ai-rescue.sh phase1
+#   读它的地方：ai-rescue.sh auto_step_config()
 
 wifi_ssid=
 #   自动连接的 WiFi 名称。留空 = 第 1 步不试 WiFi。
@@ -40,14 +83,12 @@ wifi_password=
 #   密码里的 " 和 \ 会被自动转义，直接写原样即可。
 
 wired_dhcp=1
-#   是否尝试有线网卡 DHCP（急救第 1 步的第二步）。
-#   读它的地方：ai-network.sh net_up_wired_dhcp()
+#   是否尝试有线网卡 DHCP（急救第 1 步 / 第 2 步）。
+#   读它的地方：ai-rescue.sh auto_step_config()、ai-network.sh
 
 static_ip=
-#   非空则改用静态地址，DHCP 不再执行。
-#   4.0 的 static_ip 只存在于文件里，没有任何代码读它，等于摆设。
-#   现在真的会执行 ip addr add / ip route add。
-#   例：192.168.0.50
+#   非空则改用静态地址，DHCP 不再执行。例：192.168.0.50
+#   读它的地方：ai-network.sh、ai-rescue.sh
 
 static_mask=
 #   支持两种写法：24 或 255.255.255.0。留空按 24 处理。
@@ -61,7 +102,7 @@ static_dns=
 
 hotspot_enabled=1
 #   急救第 3 步：要不要让本机自己开热点。
-#   0 = 跳过第 3 步。
+#   0 = 跳过第 3 步；读它的地方：ai-rescue.sh auto_step_pc_hotspot()
 
 hotspot_ssid=
 #   本机热点名称。留空 = 每次随机 8 位。
@@ -69,22 +110,40 @@ hotspot_ssid=
 hotspot_password=
 #   本机热点密码。留空 = 每次随机 12 位。
 
+phone_hotspot_ssid=
+#   手机热点名称：急救全自动时去连这个热点（现场没人能输入，只能预配置）。
+#   留空 = 跳过这一步。读它的地方：ai-rescue.sh auto_step_phone_hotspot()
+
+phone_hotspot_password=
+#   手机热点密码。
+
 ai_user=ai
 #   SSH 允许登录的用户名。
-#   同时决定：AllowUsers、chpasswd 改哪个用户、监视页杀哪个用户的会话。
-#   4.0 到处硬编码 "ai"。
+#   同时决定：AllowUsers、chpasswd 改哪个用户、监视页杀哪个用户的会话、
+#   哪些进程算“AI 的登录会话”。
+#   读它的地方：ai-boot-common.sh ai_user_name()
 
-ai_stop_file=/root/.ai-ok
-#   停止标记文件。touch 它就表示“我干完了”。
-#   4.0 把它硬编码在 ai-rescue.sh 里，配置文件里的这个键没人读。
+ai_done_file=/root/.ai-done
+#   “AI 完工”标记文件：AI 自己 touch 它，表示任务做完了。
+#   和下面的急停标记语义相反，不要混用。
+#   读它的地方：ai-monitor.sh、ai-rescue.sh、ai-tools.sh
+
+ai_estop_file=/root/.ai-estop
+#   人工急停标记：只有操作者能设置/清除（监视页按 E）。
+#   存在它时急救流程不再继续，远程会话会被断开。
+#   读它的地方：ai-monitor.sh、ai-rescue.sh、ai-tools.sh
+#
+#   兼容说明：4.x 的旧配置里有一个合并的“停止键”，它把“AI 完工”和
+#   “人工急停”两种相反含义混在一起。旧配置读入时会自动当成 ai_done_file
+#   理解一次，并且不会再写回文件。
 
 ssh_port=22
 #   SSH 端口。会写进 /etc/ssh/sshd_config.d/aiboot.conf。
-#   读它的地方：ai-ssh.sh apply_sshd_config()
+#   读它的地方：ai-boot-common.sh apply_sshd_config()、ai-monitor.sh 等
 
 ssh_allow_root=0
 #   0 = PermitRootLogin no（推荐，用 sudo su - 提权）
-#   1 = PermitRootLogin yes
+#   1 = PermitRootLogin yes（并把 root 加进 AllowUsers 白名单）
 
 log_level=info
 #   info = 平时不在控制台刷日志；debug = 也打到控制台。
@@ -92,4 +151,4 @@ log_level=info
 
 log_save_usb=1
 #   是否把日志追加写到 <U盘>/AI-Boot/logs/ai-boot.log。
-#   0 = 只打控制台。
+#   0 = 只打控制台。位置只读时写不进去，会静默跳过，不影响主流程。

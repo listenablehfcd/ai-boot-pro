@@ -227,10 +227,12 @@ rescue_guide_page() {
     ui_line "$(t rescue_s4_manual)"
     ui_line "$(t rescue_s4_keys)"
     ui_rule
-    press_any_key "$(t press_any)" || return 0
-    if confirm "$(t rescue_s4_shell_confirm)"; then
-        /usr/local/bin/ai-shell.sh
+    # 急救模式的目标场景就是"没有键盘"。这一页必须能自己走下去：
+    # 等 10 秒；有键按下且是 ESC 才回主菜单，否则自动进入命令行。
+    if ui_wait_key 10; then
+        [ "${UI_KEY:-}" = "ESC" ] && return 0
     fi
+    /usr/local/bin/ai-shell.sh
     return 0
 }
 

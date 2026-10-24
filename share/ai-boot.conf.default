@@ -1,9 +1,15 @@
-# AI-Boot 5.2 的静态默认值。
+# AI-Boot 的静态默认值（模板 / 兜底说明）。
 # 这个文件在镜像里只是“说明书 + 兜底模板”：
 # 生成 ai-boot.conf 的代码在 /usr/local/bin/ai-boot-common.sh 的 cfg_write()。
 # 想改默认值就改那里，别只改这里。
 #
-# 每个键的作用见同目录的 ai-boot.conf.README
+# 键集合必须与 ai-boot-common.sh 里的 CFG_KEYS / CFG_DEFAULT 完全一致
+# （tests/check_consistency.sh 会逐键核对：键集合 + 每个默认值）。
+# 每个键的作用见同目录的 ai-boot.conf.README。
+#
+# 注意：这个模板本身不会被自动读取。要让它生效，请把它复制到 U 盘上：
+#   <U盘>/AI-Boot/ai-boot.conf   推荐布局
+#   <U盘>/ai-boot.conf           根目录布局（Ventoy 数据分区常见）
 
 auto_config=1
 auto_save=1
@@ -19,8 +25,11 @@ static_dns=
 hotspot_enabled=1
 hotspot_ssid=
 hotspot_password=
+phone_hotspot_ssid=
+phone_hotspot_password=
 ai_user=ai
-ai_stop_file=/root/.ai-ok
+ai_done_file=/root/.ai-done
+ai_estop_file=/root/.ai-estop
 ssh_port=22
 ssh_allow_root=0
 log_level=info

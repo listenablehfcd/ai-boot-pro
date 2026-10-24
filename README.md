@@ -35,6 +35,65 @@
 
 ---
 
+## AI Boot Pro 1.3 · 下载
+
+| 项 | 值 |
+|---|---|
+| **版本** | **1.3** |
+| 文件名 | `AI-Boot-Pro-1.3-20261024-amd64.iso` |
+| 大小 | 2,308,472,832 字节（2.15 GiB） |
+| **MD5** | `44ac06119a3c42555fed7cb87c778b3e` |
+| 格式 | 分卷 2 个：`part-00`（1.85 GiB）+ `part-01`（0.29 GiB） |
+
+### 方式一：123 云盘（推荐）
+
+> **需要登录 123 云盘账号才能下载（不是免登录直链）。**
+
+<https://1856983545.share.123pan.cn/123pan/2xU0vd-ccfqd?pwd=1rll>
+
+打开后下载 `part-00` 与 `part-01` 两个分卷，按下面「合并分卷」步骤拼成一个 ISO。
+
+### 方式二：GitHub Releases 分卷
+
+在本仓库的 **Releases → v1.3** 里下载同样的两个分卷（同样需要合并）。
+
+### 合并分卷
+
+```bash
+# Linux / macOS
+cat AI-Boot-Pro-1.3-20261024-amd64.iso.part-* > AI-Boot-Pro-1.3-20261024-amd64.iso
+
+# Windows（在分卷所在目录开命令提示符，/b 不能省）
+copy /b AI-Boot-Pro-1.3-20261024-amd64.iso.part-00+AI-Boot-Pro-1.3-20261024-amd64.iso.part-01 AI-Boot-Pro-1.3-20261024-amd64.iso
+```
+
+合并后核对 MD5，必须等于：
+
+```
+44ac06119a3c42555fed7cb87c778b3e
+```
+
+对不上就重新下载，不要写盘。
+
+### 写入 U 盘（会清空该 U 盘）
+
+```bash
+sudo dd if=AI-Boot-Pro-1.3-20261024-amd64.iso of=/dev/sdX bs=4M status=progress oflag=sync
+```
+
+也可用 Rufus / balenaEtcher / Ventoy。
+本镜像含 **hybrid MBR**，dd/Etcher 写入后 **BIOS 与 UEFI 机器都能引导**（已实测）。
+
+### 已验证
+
+- BIOS 引导 ✓
+- UEFI(OVMF) 引导 ✓
+- USB-hybrid（模拟 dd 写盘）✓
+
+> ⚠️ 使用前请阅读本文件开头的**免责与法律声明**。
+
+---
+
 ## 这是什么
 
 AI Boot Pro 是一个基于 **Debian Live 13** 构建的救援启动盘系统。
@@ -81,9 +140,15 @@ XFS、Btrfs 等文件系统，也不受原系统状态影响。
 
 ---
 
+---
+
+
 ## 下载与写入
 
 
+**GitHub 访问不便时**，可使用备用下载（123 云盘，免登录，分享的正是本镜像）：
+
+<https://1856983545.share.123pan.cn/123pan/2xU0vd-F33yd?pwd=AiAr>
 
 Releases 提供 Slim 版镜像（小于 2 GB，**单个完整文件**，下载后可直接写入）。
 

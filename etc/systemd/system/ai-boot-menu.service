@@ -1,21 +1,23 @@
 [Unit]
-Description=AI-Boot 5.2 Main Menu
-After=multi-user.target getty.target
+Description=AI Boot Pro 1.3 Main Menu
+# 不能写 After=multi-user.target：它自己被 multi-user.target 拉起，会形成 ordering cycle，
+# 某些时序下 systemd 会丢掉这个 job → 进了系统但没有菜单（现场故障）。
+After=systemd-user-sessions.service getty.target
 Conflicts=getty@tty1.service
 
 [Service]
 Type=idle
-# 开机先装 4.0 那套紧凑拉丁字体（安全默认，绝不出现方块）；
-# 若语言是中文，ai-boot-common.sh 的 console_font_init 会再换成 CJK 字体。
+# 开机先装拉丁字体（安全默认，绝不出现方块）；中文时 common.sh 会再换 CJK 字体
 ExecStartPre=-/usr/bin/setfont -C /dev/tty1 /usr/share/consolefonts/Lat15-Fixed16.psf.gz
 ExecStart=/usr/local/bin/ai-boot-menu.sh
 StandardInput=tty
 StandardOutput=tty
+# 脚本报错也要落在 tty1，现场能看见，而不是只进 journal
+StandardError=tty
 TTYPath=/dev/tty1
-# 4.0 用 on-failure：主菜单一旦 exit 0 就没人重启它，
-# 而 getty@tty1 已被上面 Conflict 掉，屏幕上就只剩一块黑屏。
-# 4.1 的主菜单退出时会自己 exec 出一个 shell 并把菜单拉回来，
-# 这里再用 always 兜一层，保证任何异常退出都能回到菜单。
+TTYReset=yes
+TTYVHangup=yes
+# 任何异常退出都回到菜单（getty@tty1 已被 Conflict 掉，否则会黑屏）
 Restart=always
 RestartSec=2
 TimeoutStopSec=5

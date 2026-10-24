@@ -22,7 +22,7 @@ if [ -n "${AI_BOOT_COMMON_LOADED:-}" ]; then
 fi
 AI_BOOT_COMMON_LOADED=1
 
-AI_BOOT_VERSION="1.1"
+AI_BOOT_VERSION="1.3"
 AI_BOOT_PRODUCT="AI Boot Pro"
 AI_BOOT_URL="https://github.com/listenablehfcd/ai-boot-pro"
 
@@ -337,7 +337,9 @@ ui_init_layout() {
         UI_W=72
         UI_COLS=3
     fi
-    UI_RULE="$(printf '%*s' "$UI_W" '' | tr ' ' '-')"
+    # 内容行是 "| " + UI_W + " |" = UI_W+4 列；规则行是 "+" + N + "+" = N+2 列。
+    # 要两边对齐，N 必须是 UI_W+2（5.0 这里写成 UI_W，导致每屏边框短 2 列）。
+    UI_RULE="$(printf '%*s' "$((UI_W + 2))" '' | tr ' ' '-')"
 }
 _UI_PROBE="中文字"
 if [ "${#_UI_PROBE}" -eq 3 ]; then
@@ -556,6 +558,74 @@ CFG_WRITABLE=0
 CFG_VOLATILE=0
 LANG_FILE=""
 
+# ── 自动挂载可移动分区（审计修复 A）─────────────────────────────────
+# 背景：本镜像里没有 udisks / gvfs / systemd-automount，谁也不会替用户挂 U 盘。
+# find_usb_root 只扫“已经挂载”的 /run/media、/media、/mnt，于是用户插第二只
+# U 盘、或把配置放在 Ventoy 数据分区上时，系统**永远找不到**它（配置/密码/
+# 引导文件全看不见）。这里在找 U 盘之前，把可移动分区自己挂到 /run/media/<名>。
+#
+# 安全红线（宁可漏挂，也绝不挂错盘）：
+#   * 正在用的根文件系统 / Live 启动介质所在的**整盘**一律跳过（病人系统盘）
+#   * squashfs / iso9660 / udf 等只读镜像分区跳过（dd 写入的启动盘本身）
+#   * swap / LUKS / LVM / RAID 成员跳过（它们不是普通文件系统）
+#   * 没有 lsblk / mount，或任何一步失败：静默跳过，不报错、不卡主流程
+#
+# 分区名 → 所属整盘名（sdb1→sdb、nvme0n1p2→nvme0n1、mmcblk0p1→mmcblk0）。
+# 用 sysfs 判定，不做“砍掉末尾数字”的字符串处理 —— 那在 nvme/mmcblk 上会算错盘。
+block_disk_of() {
+    local n="$1" d
+    [ -n "$n" ] || return 1
+    if [ -e "/sys/class/block/$n/partition" ]; then
+        d="$(readlink -f "/sys/class/block/$n/.." 2>/dev/null)" || return 1
+        d="${d##*/}"
+        case "$d" in ''|block) return 1 ;; esac
+        printf '%s\n' "$d"
+        return 0
+    fi
+    printf '%s\n' "$n"
+}
+
+automount_removable() {
+    command -v lsblk >/dev/null 2>&1 || return 0
+    command -v mount >/dev/null 2>&1 || return 0
+    local name fstype rm mp disk dev protected=" "
+
+    # 1) 先算出“绝不能碰”的整盘：根 / 或 Live 介质所在盘
+    while read -r name mp; do
+        [ -n "$name" ] || continue
+        case "$mp" in
+            /|/run/live*|/lib/live*|/run/initramfs*) : ;;
+            *) continue ;;
+        esac
+        disk="$(block_disk_of "$name")"
+        [ -n "$disk" ] && protected="$protected$disk "
+    done < <(lsblk -rno NAME,MOUNTPOINT 2>/dev/null)
+
+    # 2) 只挂 RM=1（可移动）、有普通文件系统、且还没挂载的分区
+    while read -r name fstype rm mp; do
+        [ "$rm" = "1" ] || continue
+        [ -n "$fstype" ] || continue
+        [ -z "$mp" ] || continue
+        case "$fstype" in
+            vfat|fat|fat12|fat16|fat32|exfat|ntfs|ntfs3|ext2|ext3|ext4|f2fs|btrfs|xfs) : ;;
+            *) continue ;;
+        esac
+        disk="$(block_disk_of "$name")"
+        [ -n "$disk" ] || continue
+        case "$protected" in *" $disk "*) continue ;; esac
+        dev="/dev/$name"
+        [ -b "$dev" ] || continue
+        mkdir -p "/run/media/$name" 2>/dev/null || continue
+        # timeout 兜底：坏 U 盘/读卡器可能让 mount 卡死，主流程不能被它拖住。
+        if command -v timeout >/dev/null 2>&1; then
+            timeout 8 mount -o rw,noatime "$dev" "/run/media/$name" 2>/dev/null || true
+        else
+            mount -o rw,noatime "$dev" "/run/media/$name" 2>/dev/null || true
+        fi
+    done < <(lsblk -rno NAME,FSTYPE,RM,MOUNTPOINT 2>/dev/null)
+    return 0
+}
+
 # 找 U 盘：认 AI-Boot 目录，也认直接放在分区根上的 ai-boot.conf
 find_usb_root() {
     local base d
@@ -577,12 +647,23 @@ find_usb_root() {
 
 init_paths() {
     local cand=""
+    # 先自己挂载可移动分区（镜像里没有 automount）：不先挂上，
+    # 第二只 U 盘 / Ventoy 数据分区永远进不了 find_usb_root 的扫描范围。
+    automount_removable
     USB_ROOT="$(find_usb_root || true)"
     CFG_WRITABLE=0
     CFG_VOLATILE=1
 
+    # 两种分区布局都要认（审计修复 B：原来只拼 /AI-Boot，直接放在分区根的
+    # ai-boot.conf 永远读不到，用户那份配置等于不存在）：
+    #   <U盘>/AI-Boot/ai-boot.conf   推荐布局
+    #   <U盘>/ai-boot.conf           根目录布局（Ventoy 数据分区常见）
     if [ -n "$USB_ROOT" ]; then
-        cand="$USB_ROOT/AI-Boot"
+        if [ -d "$USB_ROOT/AI-Boot" ]; then
+            cand="$USB_ROOT/AI-Boot"
+        elif [ -f "$USB_ROOT/ai-boot.conf" ]; then
+            cand="$USB_ROOT"
+        fi
     fi
 
     # 优先 U 盘：能写就用它，不能写就只读它（并让上层给出警告）
@@ -926,6 +1007,105 @@ key_pb_get() {
 # ai_user_name 在 ai-monitor.sh 和 ai-password.sh 里各有一份，
 # LOCK_FILE 在 ai-ssh.sh 和 ai-rescue.sh 里各有一份。
 # 缺一个键的默认值就会让两处行为不同，所以统一放这里。
+
+# ── SSH 会话检测（Debian 13 可用版）──────────────────────────────────
+# 背景（审计确认）：
+#   * Debian 13 (trixie) 已移除 utmp/wtmp，`who` 永远是空输出，镜像里也没有
+#     创建 /run/utmp —— 用 who 判断“有没有登录会话”在 Debian 13 上必然失效。
+#   * OpenSSH 9.8+ 把 pty slave dup2 给了 shell 子进程，会话进程
+#     （sshd-session）自己的 fd/0 并不指向 /dev/pts/*，所以只翻 sshd 进程的
+#     fd/0 也会漏判。
+# 因此 ai_sessions() 按可靠性从高到低取三个信号，任一有结果即返回：
+#   ① loginctl（systemd-logind 的会话表；Debian 13 上最权威）
+#   ② /proc 全量扫描：属主是 ai 用户的进程谁打开了 pts 终端
+#   ③ who（只有 Debian < 13 还有 utmp 时才有意义；纯兼容兜底）
+# 任何工具缺失/失败都安全返回空，不报错、不卡住。
+
+# 已建立的 SSH 连接数。
+# 端口必须取配置值：原来写 ${ssh_port:-22}，而 ssh_port 是普通变量，
+# 配置里自定义的端口永远不生效（永远按 22 处理）—— 审计确认的死键。
+ai_ssh_conn_count() {
+    local port n=""
+    port="$(cfg_get ssh_port)"
+    [ -n "$port" ] || port=22
+    # 注意：grep -c 在 0 行时既打印 "0" 又返回 1，绝不能写 "|| echo 0"（会输出两行）。
+    if command -v ss >/dev/null 2>&1; then
+        n="$(ss -Htn state established "( sport = :$port )" 2>/dev/null | grep -c . 2>/dev/null)"
+    elif command -v netstat >/dev/null 2>&1; then
+        n="$(netstat -tn 2>/dev/null | awk -v p=":$port" '$4 ~ p"$" && $6=="ESTABLISHED"' | grep -c . 2>/dev/null)"
+    fi
+    n="${n//[^0-9]/}"
+    printf '%s\n' "${n:-0}"
+}
+
+# 当前登录会话的 tty 列表（可能为空）
+ai_sessions() {
+    local u uid out="" sid name tty p vals
+    u="$(ai_user_name)"
+
+    # ① loginctl：systemd-logind 的会话表。Debian 13 上这是唯一权威来源。
+    #    /run/systemd/system 不存在 = 不是 systemd 启动，loginctl 没意义。
+    if [ -d /run/systemd/system ] && command -v loginctl >/dev/null 2>&1; then
+        out="$(
+            loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}' |
+            while read -r sid; do
+                [ -n "$sid" ] || continue
+                vals="$(loginctl show-session "$sid" -p TTY -p Name 2>/dev/null)"
+                name="$(printf '%s\n' "$vals" | sed -n 's/^Name=//p')"
+                tty="$(printf '%s\n' "$vals" | sed -n 's/^TTY=//p')"
+                [ "$name" = "$u" ] || continue
+                case "$tty" in
+                    pts/*) printf '%s\n' "$tty" ;;
+                esac
+            done | sort -u
+        )"
+        if [ -n "$out" ]; then printf '%s\n' "$out"; return 0; fi
+    fi
+
+    # ② /proc 全量扫描（不依赖 utmp、也不依赖 pgrep）：
+    #    属主是 ai 用户的进程，fd/0 指向 /dev/pts/N —— 这就是登录 shell 的特征
+    #    （pty slave 被 dup2 到 0/1/2）。工具缺失/读不到就自然跳过，不会报错。
+    uid="$(id -u "$u" 2>/dev/null || true)"
+    if [ -n "$uid" ]; then
+        out="$(
+            for p in /proc/[0-9]*; do
+                [ -d "$p" ] || continue
+                [ "$(stat -c %u "$p" 2>/dev/null || echo x)" = "$uid" ] || continue
+                tty="$(readlink "$p/fd/0" 2>/dev/null || true)"
+                case "$tty" in
+                    /dev/pts/[0-9]*) printf '%s\n' "${tty#/dev/}" ;;
+                esac
+            done | sort -u
+        )"
+        if [ -n "$out" ]; then printf '%s\n' "$out"; return 0; fi
+    fi
+
+    # ③ who：仅 Debian < 13（utmp 还在）有意义。Debian 13 起 utmp 被移除，
+    #    who 恒为空 —— 保留这一档只是兼容老镜像，别把它当主路径。
+    if command -v who >/dev/null 2>&1; then
+        out="$(who 2>/dev/null | awk -v u="$u" '$1==u {print $2}' | sort -u)"
+        if [ -n "$out" ]; then printf '%s\n' "$out"; return 0; fi
+    fi
+    return 0
+}
+
+# 杀掉该用户的 SSH 会话；成功时把被杀的 pid 打到 stdout
+ai_kill_sessions() {
+    local u pids
+    u="$(ai_user_name)"
+    # 只按"进程名(comm)精确匹配 + 属主"杀，绝不用 -f 匹配命令行，
+    # 否则命令行里恰好含 "sshd: " 的无关进程（编辑器、grep、脚本）会被误杀。
+    #   OpenSSH >= 9.8 : comm = sshd-session
+    #   OpenSSH <  9.8 : comm = sshd        （参数为 "sshd: <user>"）
+    pids="$(pgrep -u "$u" -x sshd-session 2>/dev/null || true)"
+    pids="$pids $(pgrep -u "$u" -x sshd 2>/dev/null || true)"
+    [ -z "$(echo $pids)" ] && return 1
+    kill $pids 2>/dev/null || true
+    echo $pids
+    return 0
+}
+# ──────────────────────────────────────────────────────────────────────
+
 ai_user_name() {
     local u
     u="$(cfg_get ai_user)"
@@ -1039,6 +1219,7 @@ t() {
             cfg_path)                  echo "Path: " ;;
             cfg_ro_title)            echo "This location is READ-ONLY" ;;
             cfg_ro_line)             echo "Changes cannot be saved to: " ;;
+            cfg_ro_save)             echo "Press O to save the current config to a writable disk, ESC = back." ;;
             cfg_save_nano)           echo "  Save: Ctrl+O then Enter.   Quit: Ctrl+X." ;;
             cfg_save_vi)             echo "  Save and quit: press Esc, type :wq and Enter.   Quit without saving: Esc then :q!" ;;
             cfg_toggle_same)         echo "Unchanged." ;;
@@ -1051,7 +1232,8 @@ t() {
             cfg_source_file)         echo "the config file on the disk" ;;
             cfg_source_mem)          echo "in-memory defaults (there is NO config file yet)" ;;
             cfg_howto_t1)            echo "To make it load automatically, put ai-boot.conf on the USB stick:" ;;
-            cfg_howto_t2)            echo "  <USB>/AI-Boot/ai-boot.conf   (or right in the USB root)" ;;
+            cfg_howto_t2)            echo "  Ventoy stick (has a writable partition): <USB>/AI-Boot/ai-boot.conf" ;;
+            cfg_howto_t2b)           echo "  dd-written ISO stick is READ-ONLY: plug in a SECOND writable USB and pick it with S" ;;
             cfg_howto_t3)            echo "Without a file the built-in defaults are used; changes are lost on reboot." ;;
             cfg_howto_keys)          echo "Keys: E edit item by item   G edit the raw file   ESC back" ;;
             cfg_pick_title)          echo "Which disk should the config be written to?" ;;
@@ -1541,14 +1723,15 @@ t() {
         common_yn_hint)            echo "(请输入 Y 或 N)" ;;
         common_confirm_default)    echo "确定吗？" ;;
         cfg_write_readonly)        echo "配置位置只读，未写回：" ;;
-        warn_readonly)             echo "$(t warn_readonly)" ;;
-        warn_volatile)             echo "$(t warn_volatile)" ;;
+        warn_readonly)             echo "警告：配置位置只读，改动不会保存。" ;;
+        warn_volatile)             echo "警告：没有可写的 U 盘目录，配置存在内存里，重启就丢失。" ;;
         warn_where)                echo "      位置：" ;;
         # config page (ai-config.sh)
         cfg_where_title)           echo "配置文件位置" ;;
         cfg_path)                  echo "路径：" ;;
         cfg_ro_title)            echo "这个位置是只读的" ;;
         cfg_ro_line)             echo "改动无法保存到：" ;;
+        cfg_ro_save)             echo "按 O 把当前配置保存到可写磁盘，ESC 返回。" ;;
         cfg_save_nano)           echo "  存盘：Ctrl+O 再回车。  退出：Ctrl+X。" ;;
         cfg_save_vi)             echo "  存盘退出：按 Esc，输入 :wq 再回车。  不保存退出：按 Esc 再输入 :q!" ;;
         cfg_toggle_same)         echo "没有改动。" ;;
@@ -1561,7 +1744,8 @@ t() {
         cfg_source_file)         echo "磁盘上的配置文件" ;;
         cfg_source_mem)          echo "内存里的默认值（还没有配置文件）" ;;
         cfg_howto_t1)            echo "想让它开机自动生效：把 ai-boot.conf 放到 U 盘上" ;;
-        cfg_howto_t2)            echo "  <U盘>/AI-Boot/ai-boot.conf  （或直接放 U 盘里）" ;;
+        cfg_howto_t2)            echo "  Ventoy 做的 U 盘（有可写分区）：<U盘>/AI-Boot/ai-boot.conf" ;;
+            cfg_howto_t2b)           echo "  dd 写入的 ISO 盘只读：可用别的可写 U 盘来保存" ;;
         cfg_howto_t3)            echo "没有文件时用的是内置默认值，改动重启就没了。" ;;
         cfg_howto_keys)          echo "按键：E 逐项编辑   G 编辑原始文件   ESC 返回" ;;
         cfg_pick_title)          echo "配置写到哪个位置？" ;;
@@ -2001,8 +2185,19 @@ set_language() {
     local lang="$1"
     AI_BOOT_LANG="$lang"
     mkdir -p "$(dirname "$LANG_FILE")" 2>/dev/null || true
-    printf '%s\n' "$lang" > "$LANG_FILE" 2>/dev/null || true
-    cfg_set lang "$lang" >/dev/null 2>&1 || true
+    # 先只写语言文件。配置文件只在**本来就已经存在**时才更新 lang 键 ——
+    # 审计确认：原来无条件 cfg_set，只切语言就会静默创建配置文件，
+    # 违反“创建文件前必须征求同意”，用户也不知道 U 盘上多了个文件。
+    if ! { printf '%s\n' "$lang" > "$LANG_FILE"; } 2>/dev/null; then
+        # 配置位置只读时 LANG_FILE 跟着只读（配置放在 dd 启动盘上就是这种）：
+        # 退一步记到内存目录，否则“切了语言不生效、回主菜单又变回去”。
+        # /run 是 tmpfs，重启自然消失，不会盖掉磁盘上的配置。
+        mkdir -p /run/ai-boot 2>/dev/null || true
+        { printf '%s\n' "$lang" > /run/ai-boot/lang; } 2>/dev/null || true
+    fi
+    if [ -f "$CONFIG_FILE" ]; then
+        cfg_set lang "$lang" >/dev/null 2>&1 || true
+    fi
 }
 
 # ============================================================
@@ -2092,7 +2287,13 @@ reload_language() {
     # 语言是子进程（ai-config.sh）改的，父进程的内存副本永远不变 —— 于是
     # "按 L 切中文，主菜单还是英文"，必须重启才生效。已用真库复现。
     local v=""
-    if [ -f "$LANG_FILE" ]; then
+    # 用户这次开机里手动切过语言时，/run/ai-boot/lang 是最新的意图：
+    # 配置放在只读位置时 LANG_FILE 写不进去，就是靠这个文件让切换立刻生效。
+    # /run 是 tmpfs，重启后自然消失，不会盖掉磁盘配置里的 lang。
+    if [ -f /run/ai-boot/lang ]; then
+        v="$(tr -d '\n\r' < /run/ai-boot/lang 2>/dev/null || true)"
+    fi
+    if [ -z "$v" ] && [ -f "$LANG_FILE" ]; then
         v="$(tr -d '\n\r' < "$LANG_FILE" 2>/dev/null || true)"
     fi
     if [ -z "$v" ] && [ -f "$CONFIG_FILE" ]; then

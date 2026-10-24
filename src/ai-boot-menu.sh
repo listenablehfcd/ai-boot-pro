@@ -148,13 +148,14 @@ handle_choice() {
     case "$c" in
         NUM:1)  /usr/local/bin/ai-ssh.sh ;;
         NUM:2)  /usr/local/bin/ai-network.sh --wifi ;;
-        NUM:3)  /usr/local/bin/ai-rescue.sh ;;
-        NUM:4)  /usr/local/bin/ai-password.sh --file ;;
-        NUM:5)  /usr/local/bin/ai-shell.sh ;;
-        NUM:6)  /usr/local/bin/ai-tools.sh --windows ;;
-        NUM:7)  /usr/local/bin/ai-tools.sh --browser ;;
-        NUM:8)  /usr/local/bin/ai-tools.sh --backup ;;
-        NUM:9)  /usr/local/bin/ai-tools.sh --check ;;
+        # 序号必须与屏幕标签一致：3=密码文件 4=命令行 5=Windows 工具
+        # 6=文件浏览 7=备份 8=自检（急救已移到整体配置 A）
+        NUM:3)  /usr/local/bin/ai-password.sh --file ;;
+        NUM:4)  /usr/local/bin/ai-shell.sh ;;
+        NUM:5)  /usr/local/bin/ai-tools.sh --windows ;;
+        NUM:6)  /usr/local/bin/ai-tools.sh --browser ;;
+        NUM:7)  /usr/local/bin/ai-tools.sh --backup ;;
+        NUM:8)  /usr/local/bin/ai-tools.sh --check ;;
         CH:A|CH:a) /usr/local/bin/ai-rescue.sh ;;
         CH:B|CH:b) /usr/local/bin/ai-guided.sh ;;
         CH:C|CH:c) /usr/local/bin/ai-config.sh --auto-config ;;

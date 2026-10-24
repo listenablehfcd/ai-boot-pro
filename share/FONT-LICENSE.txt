@@ -1,13 +1,24 @@
-本目录下的 aiboot-cjk.psf.gz（控制台中文字体）不是 MIT 授权。
-============================================================
+FONT LICENSE NOTICE -- AI Boot Pro
+===================================
 
-它是从 GNU Unifont 生成的「修改版子集」（截取子集 + 转换为 PSF2 格式），
-按 GNU GPL v2 或更高版本分发（并附 GNU font embedding exception）。
+The console CJK font in this image (aiboot-cjk.psf.gz) is NOT MIT licensed.
 
-· 上游：GNU Unifont — https://unifoundry.com/unifont/
-· 上游许可证：https://unifoundry.com/LICENSE.txt
-· 对应的生成脚本、码点清单与复现步骤见仓库的 font/ 目录
-· 本仓库的原创代码（src/、etc/、其它 share/ 文件）为 MIT
+It is a modified subset of GNU Unifont (subset taken, converted to PSF2),
+distributed under the GNU General Public License version 2 or later,
+together with the GNU font embedding exception.
 
-本镜像把该字体作为「功能性组件」随系统分发，因此不依赖字体嵌入例外，
-字体本身按 GPL v2+ 对待。详见仓库根目录的 THIRD-PARTY.md。
+  Upstream : GNU Unifont - https://unifoundry.com/unifont/
+  License  : https://unifoundry.com/LICENSE.txt
+  Source   : the generator script, the code point list and the exact
+             reproduction steps are in the "font/" directory of the
+             project repository.
+
+The original code of AI Boot Pro (the ai-*.sh scripts, the systemd unit,
+the sshd snippet, this file and the rest of share/) is MIT licensed.
+
+This image distributes the font as a functional component of the system,
+so the font embedding exception is not relied upon; the font itself is
+treated as GPL v2 or later.
+
+See THIRD-PARTY.md in the project repository for the full notice and for
+the licenses of the Debian components included in this image.

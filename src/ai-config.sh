@@ -158,6 +158,40 @@ cfg_pick_disk() {
     return 1
 }
 
+# 只读位置的逃逸口（审计修复 C）：把当前内存里的配置另存到用户挑的可写磁盘。
+# dd 写入的启动盘是只读 ISO，CONFIG_FILE 写不回去；而审计同时确认本镜像
+# 没有 automount —— 用户就算插了第二只 U 盘，以前也无处可选、写不进去。
+# 现在公共库的 automount_removable() 会先挂载可移动分区，cfg_pick_disk 才
+# 真的能列出那只 U 盘。
+# 只**临时**切换 CONFIG_FILE / AI_BOOT_DIR（cfg_write 按当前值写），写完
+# 立刻恢复，不把本次会话的全局状态改坏（否则后续编辑会写到别处，很难解释）。
+cfg_save_to_writable() {
+    local orig_dir="$AI_BOOT_DIR" orig_wr="$CFG_WRITABLE" orig_vol="$CFG_VOLATILE"
+    local dest rc=1
+    if ! cfg_pick_disk; then
+        echo "$(t cfg_pick_cancel)"
+        sleep 2
+        return 1
+    fi
+    dest="$CONFIG_FILE"
+    CFG_WRITABLE=1
+    if cfg_write; then
+        echo "$(t cfg_written)$dest"
+        log "config saved to writable disk: $dest"
+        rc=0
+    else
+        # 不能假成功：磁盘满 / 中途被拔 / 突然只读，都必须明确说写入失败
+        echo "$(t cfg_write_fail)"
+        log "config save to $dest FAILED"
+    fi
+    # 恢复原来的位置与可写状态：这一下只是“另存一份”，不是搬家
+    ai_boot_set_dir "$orig_dir"
+    CFG_WRITABLE="$orig_wr"
+    CFG_VOLATILE="$orig_vol"
+    sleep 2
+    return "$rc"
+}
+
 # 需要写文件时调用：文件不存在就先问用户（并让他选盘）。0=可以写，1=别写
 cfg_ensure_file() {
     [ -f "$CONFIG_FILE" ] && return 0
@@ -367,6 +401,15 @@ edit_config_screen() {
     while true; do
         clear
         show_where
+        # 只读位置必须在页面顶部就说清楚“改了也存不上”，否则用户会以为
+        # 配置功能坏了（审计修复 C：这里原来只在小字里提一句）。
+        if [ "$CFG_WRITABLE" != "1" ]; then
+            ui_rule
+            ui_line "$(t cfg_ro_title)"
+            ui_line "$(t cfg_ro_line)$CONFIG_FILE"
+            ui_line "$(t cfg_ro_save)"
+            ui_rule
+        fi
         ui_line "$(t cfg_edit_list_title)"
         ui_rule
         for ((idx = 0; idx < count; idx++)); do
@@ -411,6 +454,13 @@ edit_config_screen() {
                 ;;
             CH:W|CH:w)
                 cfg_show_howto ;;
+            CH:O|CH:o)
+                # 只读位置的逃逸口：把内存里的配置另存到可写磁盘（修复 C）。
+                # 可写时不需要它 —— 按 S 就是直接写回原文件。
+                if [ "$CFG_WRITABLE" != "1" ]; then
+                    cfg_save_to_writable || true
+                fi
+                ;;
             CH:S|CH:s)
                 if ! cfg_ensure_file; then
                     sleep 1
@@ -458,14 +508,22 @@ edit_config_screen() {
 
 # ---------------- 原始文件编辑 ----------------
 edit_raw_file() {
-    local ed="" cand
+    local ed="" cand c
     clear
     # 只读位置就别打开了：用户改完存不上，等于白干（审计已列）
     if [ "$CFG_WRITABLE" != "1" ]; then
         ui_title "$(t cfg_ro_title)"
         ui_line "$(t cfg_ro_line)$CONFIG_FILE"
+        # 但只读也不是死路：O = 把内存里的配置另存到可写磁盘（审计修复 C）。
+        # 这正是 dd 启动盘 + 第二只 U 盘的用法：没有这一步，配置永远存不下来。
+        ui_line "$(t cfg_ro_save)"
         ui_rule
-        press_any_key "$(t press_any)" || return 0
+        printf '> '
+        c="$(read_choice 1)"
+        case "$c" in
+            CH:O|CH:o) cfg_save_to_writable || true ;;
+            *) : ;;
+        esac
         return 0
     fi
     # 文件不存在时**先问再创建**，不再静默建一个出来
@@ -536,8 +594,8 @@ toggle_key() {
     ui_rule
     c="$(read_choice 2)"
     case "$c" in
-        CH:1) v=1 ;;
-        CH:0) v=0 ;;
+        NUM:1|CH:1) v=1 ;;
+        NUM:0|CH:0) v=0 ;;
         *)    return 0 ;;
     esac
     if [ "$v" = "$cur" ]; then
