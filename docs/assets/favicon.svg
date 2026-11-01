@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AI Boot Pro">
+  <rect width="64" height="64" rx="15" fill="#081113"/>
+  <rect x="1" y="1" width="62" height="62" rx="14" fill="none" stroke="#41dd88" stroke-opacity=".5" stroke-width="2"/>
+  <path d="M16 22.5l10.5 9.5L16 41.5" fill="none" stroke="#41dd88" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M33 41.5h15" fill="none" stroke="#41dd88" stroke-width="5.5" stroke-linecap="round"/>
+</svg>

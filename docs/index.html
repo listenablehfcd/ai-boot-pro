@@ -1,0 +1,725 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Boot Pro — 救援启动盘 · 插上 U 盘，让远程的人接进来</title>
+<meta name="description" content="AI Boot Pro 是基于 Debian Live 13 的救援启动盘：U 盘启动后自动联网、自动开启 SSH，把 IP、端口、账号与密码显示在屏幕上，让远程工程师或 AI 登录排障、救数据、修引导。BIOS + UEFI 双引导，纯文本界面。">
+<meta name="theme-color" content="#06090a">
+<meta name="color-scheme" content="dark">
+<link rel="canonical" href="https://listenablehfcd.github.io/ai-boot-pro/">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="AI Boot Pro">
+<meta property="og:title" content="AI Boot Pro — 救援启动盘">
+<meta property="og:description" content="插上 U 盘，让远程的人或 AI 接进来。Debian Live 13 · BIOS/UEFI 双引导 · 纯文本界面 · 屏幕直出 SSH 凭据。">
+<meta property="og:url" content="https://listenablehfcd.github.io/ai-boot-pro/">
+<meta property="og:locale" content="zh_CN">
+<meta name="twitter:card" content="summary">
+<script>document.documentElement.classList.add('js');</script>
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">跳到正文</a>
+<div class="backdrop" aria-hidden="true"></div>
+<div class="progress" aria-hidden="true"><i id="progress-bar"></i></div>
+
+<header class="topbar" id="topbar">
+  <div class="wrap topbar-inner">
+    <a class="brand" href="#top" aria-label="AI Boot Pro 回到顶部">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7.5l4.5 4.5L5 16.5"/><path d="M13 16.5h6"/></svg>
+      </span>
+      <span class="brand-text"><span class="brand-name">AI Boot Pro</span><span class="brand-sub">rescue disk</span></span>
+    </a>
+
+    <nav class="nav" aria-label="页面导航">
+      <a href="#overview">是什么</a>
+      <a href="#howto">怎么用</a>
+      <a href="#menu">主菜单</a>
+      <a href="#download">下载</a>
+      <a href="#safety">安全边界</a>
+      <a href="#build">构建</a>
+      <a href="#status">验证状态</a>
+    </nav>
+
+    <div class="topbar-actions">
+      <a class="btn btn-ghost-top" href="https://github.com/listenablehfcd/ai-boot-pro" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.73.5.5 5.73.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.7-3.88-1.54-3.88-1.54-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.23-1.28-5.23-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.79 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.69 5.41-5.25 5.7.41.36.78 1.06.78 2.14 0 1.55-.01 2.79-.01 3.17 0 .31.21.68.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5z"/></svg>
+        GitHub
+      </a>
+      <a class="btn btn-primary" href="#download">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4.5 19.5h15"/></svg>
+        下载 2.0
+      </a>
+      <button class="menu-toggle" id="menu-toggle" aria-expanded="false" aria-controls="mobile-nav" aria-label="展开导航">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="wrap mobile-nav" id="mobile-nav" hidden>
+    <a href="#overview">是什么</a>
+    <a href="#howto">怎么用</a>
+    <a href="#menu">主菜单</a>
+    <a href="#download">下载</a>
+    <a href="#safety">安全边界</a>
+    <a href="#build">构建</a>
+    <a href="#status">验证状态</a>
+    <a href="https://github.com/listenablehfcd/ai-boot-pro" target="_blank" rel="noopener">GitHub 仓库 ↗</a>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ================= HERO ================= -->
+  <section class="hero" id="top">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <p class="eyebrow">Debian Live 13 · 救援启动盘</p>
+        <h1>把 U 盘插进<br>开不了机的电脑，<br><em>让远程的人接进来</em></h1>
+        <p class="lede">
+          AI Boot Pro 启动后<strong>自动联网、自动开启 SSH</strong>，把 IP、端口、账号和密码直接打在屏幕上。
+          远程的工程师或 AI 登录进来，就能排查故障、抢救数据、修复引导 —— 现场的人只需要做两件事：插盘、开机。
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary btn-lg" href="#download">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4.5 19.5h15"/></svg>
+            下载 2.0 镜像 <span style="font-family:var(--mono);font-weight:500;opacity:.72;font-size:12px">2.15 GiB</span>
+          </a>
+          <a class="btn btn-lg" href="https://github.com/listenablehfcd/ai-boot-pro" target="_blank" rel="noopener">
+            查看源码
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7"/><path d="M9 7h8v8"/></svg>
+          </a>
+        </div>
+        <p class="cta-note">
+          <span>MD5 可校验</span><span class="sep"></span>
+          <span>镜像走 123 云盘（需登录）</span><span class="sep"></span>
+          <a href="#safety">使用前请先读免责声明</a>
+        </p>
+        <ul class="chips">
+          <li class="chip"><span class="dot-live" aria-hidden="true"></span>BIOS · UEFI · USB-hybrid</li>
+          <li class="chip">纯文本界面</li>
+          <li class="chip">root 免密提权</li>
+          <li class="chip">MIT</li>
+        </ul>
+      </div>
+
+      <div class="term hero-term" role="img" aria-label="AI Boot Pro 开机后屏幕示意：显示网络已就绪、SSH 运行在 22 端口，以及 IP、用户名和随机密码">
+        <div class="term-bar" aria-hidden="true">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="term-title">aiboot · tty1</span>
+          <span class="term-chip">80×25</span>
+        </div>
+        <div class="term-body" id="boot-log">
+          <div class="ln"><span class="t-dim">AI Boot Pro 2.0</span><span class="t-dim" style="margin-left:2ch">Debian Live 13.6 · amd64</span></div>
+          <div class="ln"><span class="id t-ok">[ ok ]</span><span class="k">启动介质</span><span class="v">AI_BOOT_PRO · USB</span></div>
+          <div class="ln"><span class="id t-ok">[ ok ]</span><span class="k">网络</span><span class="v">eth0 · 192.168.1.23</span></div>
+          <div class="ln"><span class="id t-ok">[ ok ]</span><span class="k">SSH</span><span class="v">running · 端口 22</span></div>
+          <div class="ln"><span class="id t-ok">[ ok ]</span><span class="k">显示</span><span class="v">文本控制台 · 无需显卡驱动</span></div>
+          <div class="ln">&nbsp;</div>
+          <div class="ln cred"><span class="k">IP</span><span class="v">192.168.1.23</span></div>
+          <div class="ln cred"><span class="k">port</span><span class="v">22</span></div>
+          <div class="ln cred"><span class="k">user</span><span class="v">ai</span></div>
+          <div class="ln cred"><span class="k">password</span><span class="v">8246391052736481</span></div>
+          <div class="ln">&nbsp;</div>
+          <div class="ln"><span class="t-cmd">ssh -p 22 ai@192.168.1.23</span><span class="cursor" aria-hidden="true"></span></div>
+        </div>
+        <div class="term-cap"><span>开机后的屏幕示意</span><span>纯文本 · 无图形环境</span></div>
+      </div>
+    </div>
+
+    <div class="wrap" style="margin-top:clamp(40px,5vw,64px)">
+      <div class="stats">
+        <div class="stat"><b>2.15 GiB</b><span>镜像体积</span><p>单个完整 ISO，写入即引导</p></div>
+        <div class="stat"><b>13.6</b><span>Debian Live</span><p>amd64 standard 底子</p></div>
+        <div class="stat"><b>03</b><span>已验证引导</span><p>BIOS · UEFI · USB-hybrid</p></div>
+        <div class="stat"><b>00</b><span>图形依赖</span><p>纯文本控制台，无需显卡驱动</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 01 是什么 ================= -->
+  <section class="band" id="overview">
+    <div class="wrap">
+      <div class="sec-head" data-reveal>
+        <p class="eyebrow">01 / 是什么</p>
+        <h2>一个能自己联网、自己开门的 Linux 救援系统</h2>
+        <p>它不修你的系统，它是给你一个能用的系统 —— 然后把门打开，让懂的人进来。</p>
+      </div>
+
+      <div class="split">
+        <div data-reveal>
+          <p class="lede" style="margin-top:0">
+            把镜像写进 U 盘，插到一台开不了机的电脑上启动，系统会尝试联网、拉起 sshd，
+            并把连接信息打到屏幕上。整个过程不需要图形界面，也不要求这台机器原本还能用。
+          </p>
+          <p class="lede">
+            和装系统不同，它默认<strong>不碰你的硬盘</strong>：救援界面只读取信息，
+            对目标磁盘的写入只在你明确选择之后才发生。
+          </p>
+          <ul class="chips" style="margin-top:22px">
+            <li class="chip">原系统盘完全损坏</li>
+            <li class="chip">没有操作系统</li>
+            <li class="chip">缺网卡驱动</li>
+            <li class="chip">显卡驱动异常</li>
+            <li class="chip">内存不大</li>
+          </ul>
+          <p style="margin-top:14px;font-size:12.5px;color:var(--dim)">以上情况系统仍可运行。</p>
+        </div>
+
+        <dl class="kv" data-reveal>
+          <div><dt>底子</dt><dd>Debian Live 13.6 <small>amd64 standard</small></dd></div>
+          <div><dt>体积</dt><dd>2,308,472,832 字节 <small>2.15 GiB</small></dd></div>
+          <div><dt>引导</dt><dd>BIOS · UEFI · USB-hybrid</dd></div>
+          <div><dt>内存</dt><dd>建议 1 GB 以上 <small>系统本身占用很低</small></dd></div>
+          <div><dt>显示</dt><dd>任意文本控制台</dd></div>
+          <div><dt>网络</dt><dd>有线 · 常见无线 · 手机热点</dd></div>
+          <div><dt>许可</dt><dd>MIT <small>镜像内第三方组件各自适用</small></dd></div>
+        </dl>
+      </div>
+
+      <div class="grid grid-3" style="margin-top:clamp(28px,4vw,44px)">
+        <article class="card" data-reveal>
+          <span class="card-num">01</span>
+          <h3><span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/></svg></span>懂的人，常常不在现场</h3>
+          <p>电脑出故障时，能处理它的人往往在另一个城市。现场的人不用学任何命令 —— 插盘、开机，然后把屏幕上的几行字念给电话那头。</p>
+        </article>
+        <article class="card" data-reveal>
+          <span class="card-num">02</span>
+          <h3><span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17V7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3z"/><path d="M8 9h3M8 13h6"/></svg></span>需要反复试错的故障</h3>
+          <p>修 Windows 引导记录、清异常启动项、改注册表关掉反复失败的更新、排查驱动或更新引起的循环重启 —— 这类活要一边查资料一边试，AI 比现场的人更有耐心。</p>
+        </article>
+        <article class="card" data-reveal>
+          <span class="card-num">03</span>
+          <h3><span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 8l7-5 7 5"/><path d="M5 16l7 5 7-5"/></svg></span>Windows PE 之外的第二条路</h3>
+          <p>PE 对非 Windows 文件系统的读写有限，对较新的存储与文件系统支持滞后，还依赖 Windows 组件。这里是一整套 Linux：NTFS、ext4、XFS、Btrfs 都能直接读写。</p>
+        </article>
+      </div>
+
+      <div class="table-wrap" style="margin-top:18px" data-reveal>
+        <table class="spec">
+          <thead>
+            <tr><th scope="col">对比项</th><th scope="col">AI Boot Pro</th><th scope="col">Windows PE</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>文件系统</td><td>NTFS / ext4 / XFS / Btrfs 直接读写</td><td class="muted">以 NTFS 为主，非 Windows 文件系统能力有限</td></tr>
+            <tr><td>运行环境</td><td>独立 Linux，不受原系统状态影响</td><td class="muted">依赖 Windows 组件，故障机上稳定性不佳</td></tr>
+            <tr><td>新硬件与新文件系统</td><td>跟随 Debian 13 的内核与工具链</td><td class="muted">更新节奏常常滞后</td></tr>
+            <tr><td>远程接入</td><td>自动联网 + sshd + 屏幕直出凭据</td><td class="muted">需要自行配置网络与远程工具</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 02 怎么用 ================= -->
+  <section class="band" id="howto">
+    <div class="wrap">
+      <div class="sec-head" data-reveal>
+        <p class="eyebrow">02 / 怎么用</p>
+        <h2>从一块 U 盘，到一条 SSH 连接</h2>
+        <p>四步。前两步在现场，后两步在远程。</p>
+      </div>
+
+      <div class="steps" data-reveal>
+        <div class="step">
+          <p class="step-k">STEP 01</p>
+          <h3>写入 U 盘</h3>
+          <p>≥ 4 GB 的 U 盘，写入会清空整块盘。用 <code>dd</code>、Rufus、balenaEtcher 或 Ventoy 都行 —— 镜像含 hybrid MBR，写进去之后 BIOS 与 UEFI 都能引导。</p>
+        </div>
+        <div class="step">
+          <p class="step-k">STEP 02</p>
+          <h3>开机从 U 盘引导</h3>
+          <p>开机时按 <code>F12</code> / <code>F11</code> / <code>F8</code> / <code>ESC</code>（视机型而定），在启动菜单里选那块 U 盘。</p>
+        </div>
+        <div class="step">
+          <p class="step-k">STEP 03</p>
+          <h3>屏幕自己给出凭据</h3>
+          <p>急救模式零输入：先试 U 盘里的配置，再试有线，再试上次成功的 WiFi，然后试手机热点，最后自己开一个热点。每一步的结果都写在屏幕上。</p>
+        </div>
+        <div class="step">
+          <p class="step-k">STEP 04</p>
+          <h3>远程登入</h3>
+          <p><code>ssh -p 22 ai@&lt;IP&gt;</code>，<code>sudo su -</code> 免密提权。登录后先读镜像里的 <code>AI-README.txt</code>。</p>
+        </div>
+      </div>
+
+      <div class="split" style="margin-top:20px">
+        <div class="code" data-reveal>
+          <button class="copy" type="button" data-copy="ssh -p 22 ai@192.168.1.23">复制</button>
+          <pre><span class="c"># 屏幕给出的连接信息</span>
+<span class="cmd">ssh</span> <span class="flag">-p 22</span> ai@192.168.1.23
+
+<span class="c"># 登录后（密码为屏幕上的随机 16 位数字）</span>
+ai@aiboot:~$ <span class="cmd">sudo su -</span>
+root@aiboot:~# <span class="cmd">cat</span> /usr/local/share/ai-boot/AI-README.txt</pre>
+        </div>
+        <div class="notes" data-reveal>
+          <div class="note">
+            <span class="n">i</span>
+            <div><h4>密码只出现在屏幕上</h4><p>随机生成，不上传任何服务器，也没有遥测回传。任何看到这块屏幕和密码的人都能以 root 登录，所以不要在不可信的环境里开机。</p></div>
+          </div>
+          <div class="note">
+            <span class="n">i</span>
+            <div><h4>给远程 AI 的说明书</h4><p><code style="font-size:12px;color:var(--sand)">AI-README.txt</code> 是写给对面那个 AI 的：有哪些工具、能碰什么、什么绝对不许碰。它比人更容易忘记边界。</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 03 主菜单 ================= -->
+  <section class="band" id="menu">
+    <div class="wrap">
+      <div class="sec-head" data-reveal>
+        <p class="eyebrow">03 / 主菜单</p>
+        <h2>三栏纯文本，第一次用的人也能在 30 秒内连上网</h2>
+        <p>没有窗口、没有图标、没有鼠标 —— 只有一块屏幕和一排数字键。这本身就是可靠性的一部分。</p>
+      </div>
+
+      <div class="split">
+        <div class="dash" data-reveal aria-label="主菜单结构示意：整体配置、单独配置、设置三栏">
+          <div class="dash-head">
+            <b>AI Boot Pro 2.0</b><span>· 主菜单</span>
+            <span class="lang"><span>中文</span><span>EN</span></span>
+          </div>
+          <div class="dash-cols">
+            <div class="dash-col">
+              <h4>整体配置</h4>
+              <ul>
+                <li><span class="k">1</span>急救模式</li>
+                <li><span class="k">2</span>引导配置</li>
+              </ul>
+              <h4 style="margin-top:18px">说明</h4>
+              <ul>
+                <li><span class="k">·</span>零输入<span class="sub">自动联网</span></li>
+                <li><span class="k">·</span>逐项提问<span class="sub">可验证上网</span></li>
+              </ul>
+            </div>
+            <div class="dash-col">
+              <h4>单独配置</h4>
+              <ul>
+                <li><span class="k">1</span>SSH</li>
+                <li><span class="k">2</span>WiFi</li>
+                <li><span class="k">3</span>密码文件</li>
+                <li><span class="k">4</span>命令行</li>
+                <li><span class="k">5</span>Windows 工具</li>
+                <li><span class="k">6</span>文件浏览</li>
+                <li><span class="k">7</span>备份</li>
+                <li><span class="k">8</span>自检</li>
+              </ul>
+            </div>
+            <div class="dash-col">
+              <h4>设置</h4>
+              <ul>
+                <li><span class="k">C</span>配置总开关</li>
+                <li><span class="k">D</span>保存与 U 盘</li>
+                <li><span class="k">E</span>其他</li>
+                <li class="is-new"><span class="k">L</span>语言<span class="tag">2.0</span></li>
+              </ul>
+              <h4 style="margin-top:18px">持久化</h4>
+              <ul>
+                <li><span class="k">·</span>持久</li>
+                <li><span class="k">·</span>只读</li>
+                <li><span class="k">·</span>仅内存</li>
+              </ul>
+            </div>
+          </div>
+          <div class="dash-foot">
+            <span>按键即跳转 · <kbd>L</kbd> 直达语言页（2.0 新增）</span>
+            <span>示意排版，实际以镜像内界面为准</span>
+          </div>
+        </div>
+
+        <div class="notes" data-reveal>
+          <div class="note">
+            <span class="n">A</span>
+            <div><h4>急救模式：零输入</h4><p>不用按任何键。系统按顺序试：U 盘里的配置 → 有线网络 → 上次连接成功的 WiFi → 手机热点 → 自己创建一个热点。每一步试什么、结果如何、下一步是什么，都显示在屏幕上。</p></div>
+          </div>
+          <div class="note">
+            <span class="n">B</span>
+            <div><h4>引导配置：递进提问</h4><p>面向能用键鼠的场景。条件由宽到严逐步收紧，每种方式都会实际尝试，并验证能不能真正访问互联网 —— 而不是只看网卡有没有起来。</p></div>
+          </div>
+          <div class="note">
+            <span class="n">C</span>
+            <div><h4>单独配置：按需</h4><p>SSH、WiFi、密码文件、命令行、Windows 工具、文件浏览、备份、自检。八个单项功能，互不干扰，缺了工具也不会把菜单卡死。</p></div>
+          </div>
+          <div class="note">
+            <span class="n">D</span>
+            <div><h4>持久化三种状态，如实显示</h4><p>dd 写入的启动盘本身是只读 ISO，配置存不进去。想保存配置，需要另外一只可写 U 盘；插上后自动挂载并建立 <code style="font-size:12px;color:var(--sand)">AI-Boot/</code>，界面会明说是「持久 / 只读 / 仅内存（重启会丢）」。</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 04 下载 ================= -->
+  <section class="band" id="download">
+    <div class="wrap">
+      <div class="sec-head" data-reveal>
+        <p class="eyebrow">04 / 下载</p>
+        <h2>拿走这一版，写进 U 盘</h2>
+        <p>镜像 2.15 GiB，超过 GitHub Release 单文件 2 GiB 上限，所以 GitHub 上只放源码，镜像通过 123 云盘分发。</p>
+      </div>
+
+      <div class="dl-grid">
+        <div class="release" data-reveal>
+          <div class="release-top">
+            <span class="release-ver">v2.0</span>
+            <span class="badge ok">当前版本</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--dim);margin-left:auto">2026-10-24</span>
+          </div>
+          <p class="release-name">AI-Boot-Pro-2.0-20261024-amd64.iso</p>
+          <p class="release-sub">BIOS + UEFI 双引导 · hybrid MBR · 纯文本界面 · 卷标 AI_BOOT_PRO</p>
+
+          <div class="hash">
+            <div class="hash-row">
+              <span class="lbl">大小</span>
+              <code>2,308,472,832 字节</code>
+              <span style="font-size:12px;color:var(--dim)">（2.15 GiB）</span>
+            </div>
+            <div class="hash-row">
+              <span class="lbl">MD5</span>
+              <code>31219a952e65e11940477c0078c3563f</code>
+              <button class="mini-copy" type="button" data-copy="31219a952e65e11940477c0078c3563f">复制</button>
+            </div>
+            <div class="hash-row">
+              <span class="lbl">引导</span>
+              <code>isolinux + grub</code>
+              <span style="font-size:12px;color:var(--dim)">2 个 El Torito 引导项</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="dl-side" data-reveal>
+          <h3>从 123 云盘获取</h3>
+          <p>云盘分享链接需要登录 123 云盘账号，不是免登录直链。下载后请核对 MD5，不一致就重新下载。</p>
+          <a class="btn btn-primary" href="https://1856983545.share.123pan.cn/123pan/2xU0vd-MdZqd?pwd=icUj#" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4.5 19.5h15"/></svg>
+            打开云盘分享
+          </a>
+          <p class="fine">提取码 <b>icUj</b><br>文件名 AI-Boot-Pro-2.0-20261024-amd64.iso</p>
+          <p class="fine" style="border-top:1px solid var(--line);padding-top:12px">为什么不在 GitHub？单个 Release 附件上限 2 GiB，这个镜像超了。项目选择不在 GitHub 上做分卷，只保留源码与说明。</p>
+        </div>
+      </div>
+
+      <p class="legal" data-reveal>
+        <strong>使用前提：</strong>本镜像仅限用于你拥有、或已获得明确授权的计算机。系统以 root 权限运行，
+        包含会清空磁盘且无法撤销的操作，风险与后果由使用者承担；作者不对由此产生的任何直接或间接损失负责。
+        本项目是 Debian Live 的衍生品，与 Debian 项目无隶属关系，亦未获其背书。
+        完整条款见 <a href="https://github.com/listenablehfcd/ai-boot-pro/blob/main/README.md" target="_blank" rel="noopener">README 的免责与法律声明</a>。
+      </p>
+
+      <div class="grid grid-2" style="margin-top:18px">
+        <div data-reveal>
+          <h3 style="font-size:14px;margin-bottom:12px;color:var(--ink-2)">写入 U 盘（会清空整块盘）</h3>
+          <div class="code">
+            <button class="copy" type="button" data-copy="sudo dd if=AI-Boot-Pro-2.0-20261024-amd64.iso of=/dev/sdX bs=4M status=progress oflag=sync">复制</button>
+            <pre><span class="cmd">sudo dd</span> if=AI-Boot-Pro-2.0-20261024-amd64.iso \
+     <span class="flag">of=</span>/dev/sdX <span class="flag">bs=4M status=progress oflag=sync</span></pre>
+          </div>
+          <p style="margin-top:12px;font-size:12.5px;color:var(--dim);line-height:1.8"><code style="color:var(--sand)">of=</code> 必须指向整块设备（<code style="color:var(--sand)">/dev/sdb</code>），不能是分区（<code style="color:var(--sand)">/dev/sdb1</code>）。写错目标盘会直接、永久破坏其上的数据。</p>
+        </div>
+        <div data-reveal>
+          <h3 style="font-size:14px;margin-bottom:12px;color:var(--ink-2)">或者用图形工具</h3>
+          <ul class="tool-list" style="border:1px solid var(--line);border-radius:12px;padding:6px 16px">
+            <li><a href="https://rufus.ie/" target="_blank" rel="noopener">Rufus</a><span>Windows</span></li>
+            <li><a href="https://etcher.balena.io/" target="_blank" rel="noopener">balenaEtcher</a><span>Windows / macOS / Linux</span></li>
+            <li><a href="https://www.ventoy.net/" target="_blank" rel="noopener">Ventoy</a><span>跨平台 · 多 ISO 共存</span></li>
+            <li><a href="#howto">dd</a><span>Linux / macOS</span></li>
+          </ul>
+          <p style="margin-top:12px;font-size:12.5px;color:var(--dim);line-height:1.8">用 Ventoy 时把 ISO 放在数据分区；BIOS 机器如果引导失败，建议选「Boot in normal mode」。</p>
+        </div>
+      </div>
+
+      <div class="notice" style="margin-top:18px" data-reveal>
+        <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 4.3L2.9 17a2 2 0 0 0 1.7 3h14.8a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 16.5h.01"/></svg></span>
+        <div>
+          <h3>配置持久化需要可写介质</h3>
+          <p>dd 写入的启动盘是只读 ISO，配置存不进去。想让它记住上次的设置，需要另外一只可写 U 盘（或 Ventoy 数据分区）。界面不会假装已经保存 —— 它会显示当前到底是「持久」「只读」还是「仅内存」。</p>
+        </div>
+      </div>
+
+      <div class="table-wrap" style="margin-top:18px" data-reveal>
+        <table class="spec">
+          <thead><tr><th scope="col">运行要求</th><th scope="col">说明</th></tr></thead>
+          <tbody>
+            <tr><td>底子</td><td>Debian Live 13（当前基于 13.6，amd64）</td></tr>
+            <tr><td>引导方式</td><td>传统 BIOS 与 UEFI 均可；镜像含 hybrid MBR，dd 写盘后可引导</td></tr>
+            <tr><td>内存</td><td>建议 1 GB 以上（系统本身占用很低）</td></tr>
+            <tr><td>U 盘</td><td>≥ 4 GB</td></tr>
+            <tr><td>显示</td><td>任意文本模式控制台；不需要图形界面与专用显卡驱动</td></tr>
+            <tr><td>网络</td><td>BIOS/UEFI 支持的有线网卡、常见无线网卡，或手机热点</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 05 安全 ================= -->
+  <section class="band" id="safety">
+    <div class="wrap">
+      <div class="sec-head" data-reveal>
+        <p class="eyebrow">05 / 安全与责任边界</p>
+        <h2>它能做很多事，所以它先说清楚边界</h2>
+        <p>这一节不是免责套话，是使用前提。系统以 root 运行在真实计算机上。</p>
+      </div>
+
+      <div class="notice" data-reveal>
+        <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 4.3L2.9 17a2 2 0 0 0 1.7 3h14.8a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 16.5h.01"/></svg></span>
+        <div>
+          <h3>只在你拥有、或已获得明确授权的设备上使用</h3>
+          <p>本工具仅可用于你自己拥有、或已获得明确授权的计算机。未经设备所有人授权而使用、或借助它获取他人计算机中的数据，由操作者承担全部法律责任。它包含会<strong>清空磁盘</strong>的操作，而且<strong>没有撤销机制，也没有回收站</strong>。</p>
+          <p><a href="https://github.com/listenablehfcd/ai-boot-pro/blob/main/README.md" target="_blank" rel="noopener">完整免责与法律声明见 README ↗</a></p>
+        </div>
+      </div>
+
+      <div class="grid grid-2" style="margin-top:18px">
+        <div class="panel" data-reveal>
+          <h3>系统会做什么 <span class="tag-ok">WILL</span></h3>
+          <ul>
+            <li>以 root 权限运行，读写你指定的磁盘</li>
+            <li>自动配置网络，生成随机密码并启动 sshd</li>
+            <li>执行你通过界面或 SSH 发起的命令</li>
+            <li>在你明确选择后写盘、格式化</li>
+          </ul>
+        </div>
+        <div class="panel" data-reveal>
+          <h3>系统不会做什么 <span class="tag-no">WON'T</span></h3>
+          <ul>
+            <li>不会在未经选择的情况下格式化或写入磁盘</li>
+            <li>不会把密码或账号上传到任何服务器</li>
+            <li>不含遥测与回传</li>
+            <li>不会主动修改原系统 —— 救援界面本身只读取信息</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="split" style="margin-top:18px">
+        <blockquote data-reveal>
+          不得删除或覆盖任何数据文件；不得写块设备或修改分区表；诊断默认只读；任何改动前先说明并获得确认。
+          <footer>—— 随镜像发布的 <code style="font-size:12px;color:var(--sand)">AI-README.txt</code> 中对远程 AI 的硬性约束（摘录）</footer>
+        </blockquote>
+        <div class="callout" data-reveal>
+          <b>这些约束依赖使用者的监督。</b>系统提供监视页：可随时断开会话、暂停 AI、查看日志、进入 root 命令行，或者急停（断开会话并停止 sshd）。远程接入意味着把机器的控制权交给网络另一端，请勿在不可信环境中使用。
+        </div>
+      </div>
+
+      <ul class="two-col-list" style="margin-top:26px" data-reveal>
+        <li><b>按现状提供，不附带任何担保。</b>包括适销性、特定用途适用性与不侵权的默示担保；作者与贡献者不对任何直接、间接、附带或后果性损害承担责任。</li>
+        <li><b>写盘前自行确认目标设备。</b>这些操作没有撤销机制，写错目标会永久破坏该设备上的数据。</li>
+        <li><b>数据只用于修复目的。</b>远程接入会接触该机器上的全部数据，应属于设备所有人或已获其同意，并遵守适用的个人信息保护法规。</li>
+        <li><b>AI 的自动判断不减轻你的责任。</b>操作者对该 AI 通过本工具实施的全部操作及其后果负责。</li>
+        <li><b>与 Debian 项目无隶属关系。</b>这是 Debian Live 的衍生品，未获 Debian 背书；Debian 是 SPI 的注册商标。</li>
+        <li><b>能救回数据之前，先别急着修系统。</b>如果机器上有唯一一份重要数据，优先把数据复制出来。</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ================= 06 构建 ================= -->
+  <section class="band" id="build">
+    <div class="wrap">
+      <div class="sec-head" data-reveal>
+        <p class="eyebrow">06 / 从源码构建</p>
+        <h2>一次构建只要一条命令，代价是 25 分钟</h2>
+        <p>Linux 环境，无需 root。需要 <code style="color:var(--sand)">xorriso</code>、<code style="color:var(--sand)">squashfs-tools-ng</code>，以及一份 Debian Live 13 amd64 standard ISO 作为底子。</p>
+      </div>
+
+      <div class="split">
+        <div class="code" data-reveal>
+          <button class="copy" type="button" data-copy="sudo apt-get install -y xorriso squashfs-tools-ng">复制</button>
+          <pre><span class="c"># 工具链</span>
+<span class="cmd">sudo apt-get install -y</span> xorriso squashfs-tools-ng
+
+<span class="c"># 解包底子 → 覆盖 overlay → tar2sqfs(zstd) → 加 hybrid MBR → 出 ISO</span>
+<span class="cmd">bash</span> tools/build.sh</pre>
+        </div>
+        <div class="notes" data-reveal>
+          <div class="note">
+            <span class="n">1</span>
+            <div><h4>不要复用上一次的构建产物</h4><p>否则历次改动会层层叠加，你永远不知道镜像里到底是什么。</p></div>
+          </div>
+          <div class="note">
+            <span class="n">2</span>
+            <div><h4>不要用 tar --delete 删文件</h4><p>GNU tar 会一并丢弃 PAX 长文件名头，一批文件会被静默改名。</p></div>
+          </div>
+          <div class="note">
+            <span class="n">3</span>
+            <div><h4>非 root 解包会丢 setuid 位</h4><p><code style="font-size:12px;color:var(--sand)">passwd</code>、<code style="font-size:12px;color:var(--sand)">sudo</code>、<code style="font-size:12px;color:var(--sand)">mount</code> 等文件需要重新设置权限，否则镜像能引导、但登不进去。</p></div>
+          </div>
+          <div class="note">
+            <span class="n">4</span>
+            <div><h4>/run 是 tmpfs</h4><p>放进镜像 <code style="font-size:12px;color:var(--sand)">/run/</code> 下的文件在启动后会被覆盖。面向用户或 AI 的文件应放在 <code style="font-size:12px;color:var(--sand)">/usr/local/share/</code> 下。</p></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout" style="margin-top:18px" data-reveal>
+        <b>为什么不把镜像塞进 Release？</b>这一版 2.15 GiB，超过 GitHub 单文件 2 GiB 上限。项目的选择是：GitHub 只放源码与说明，镜像走网盘，不做分卷 —— 分卷会让「下载一个镜像」变成一次手工拼装，出错率太高。
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 07 验证状态 ================= -->
+  <section class="band" id="status">
+    <div class="wrap">
+      <div class="sec-head" data-reveal>
+        <p class="eyebrow">07 / 验证状态</p>
+        <h2>做过的写「已实测」，没做的不写</h2>
+        <p>这个项目有一条内部规矩：<strong>没跑过的验证，不能写成「已验证」</strong>。所以下面这张表里会有 ⚠️ 和 ❌ —— 那是它现在的真实状态。</p>
+      </div>
+
+      <div class="table-wrap" data-reveal>
+        <table class="spec">
+          <thead><tr><th scope="col">验证项</th><th scope="col">状态</th><th scope="col">说明</th></tr></thead>
+          <tbody>
+            <tr><td>BIOS 引导</td><td><span class="badge ok">已实测</span></td><td class="muted">QEMU 实拍，主菜单正常出现</td></tr>
+            <tr><td>UEFI 引导</td><td><span class="badge ok">已实测</span></td><td class="muted">OVMF 固件，主菜单正常出现</td></tr>
+            <tr><td>USB-hybrid 引导</td><td><span class="badge ok">已实测</span></td><td class="muted">模拟 dd 写盘后引导通过</td></tr>
+            <tr><td>2.0 按键行为</td><td><span class="badge warn">未拿到绿灯</span></td><td class="muted">代码已改、构建成功、静态检查通过；自动化按键测试因环境问题中断</td></tr>
+            <tr><td>本版真实 SSH 登录</td><td><span class="badge warn">未重跑</span></td><td class="muted">同代码的前几版验过，这一版没有重新走一遍</td></tr>
+            <tr><td>物理真机</td><td><span class="badge no">未做</span></td><td class="muted">全部验证都在 QEMU 里完成，没有物理硬件记录</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="split" style="margin-top:18px">
+        <div data-reveal>
+          <h3 style="font-size:14.5px;margin-bottom:12px">2.0 相对 1.5 改了什么（只有 5 个文件）</h3>
+          <dl class="kv">
+            <div><dt>选盘器</dt><dd>重写 <code style="font-size:12px;color:var(--sand)">cfg_pick_disk</code>：显示前丢弃残留按键、首键 30 秒超时、非 ESC 键重绘本页</dd></div>
+            <div><dt>U 盘检测</dt><dd>先自动挂载再列盘，修「没检测到 U 盘」</dd></div>
+            <div><dt>菜单</dt><dd>主菜单新增 <code style="font-size:12px;color:var(--sand)">L. Language</code>，任意位置直达语言页并立即刷新</dd></div>
+            <div><dt>版本号</dt><dd>构建脚本与镜像内 AI-README 同步到 2.0</dd></div>
+          </dl>
+        </div>
+        <div class="callout" data-reveal>
+          <b>如果你要上真机，先测这两条：</b><br>
+          1. 主菜单按 <code>L</code> → 应直接进语言页（不再需要先进 E）<br>
+          2. <code>D → 2</code> 选保存位置 → 列表出现后等 5 秒不动，页面应停在列表上（不退回主菜单）<br>
+          <span style="color:var(--dim);font-size:12.5px">这两条是 2.0 修的东西，也是最需要人眼确认的地方。</span>
+        </div>
+      </div>
+
+      <div class="grid grid-3" style="margin-top:18px">
+        <div class="card" data-reveal><h3 style="margin-bottom:6px"><span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>引导验证</h3><p>BIOS / UEFI / USB-hybrid 三种方式都实拍过截图，主菜单正常出现，中文界面不黑屏。</p></div>
+        <div class="card" data-reveal><h3 style="margin-bottom:6px"><span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg></span>门禁检查</h3><p>构建前跑语法检查与中英文案对称检查，483 个 key、字形覆盖，全过才允许出镜像。</p></div>
+        <div class="card" data-reveal><h3 style="margin-bottom:6px"><span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v4.5l3 2"/></svg></span>还没做的</h3><p>物理真机、本版真实 SSH 登录、2.0 按键自动化。这些不是「应该没问题」，是「还没验证」。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 08 已知限制 ================= -->
+  <section class="band" id="limits">
+    <div class="wrap">
+      <div class="sec-head" data-reveal>
+        <p class="eyebrow">08 / 已知限制</p>
+        <h2>它做不到的事，也写在这里</h2>
+      </div>
+      <ul class="two-col-list" data-reveal>
+        <li><b>不做图形界面。</b>所有操作都在文本控制台完成。</li>
+        <li><b>不会主动修改原系统。</b>救援界面本身只读取信息；对目标磁盘的写入，只在你明确选择之后才发生。</li>
+        <li><b>远程接入需要能联网。</b>完全无法联网时，系统只能提供本地指引。</li>
+        <li><b>手机 USB 共享依赖机型。</b>需要手机与内核驱动配合，并非所有机型都可用。</li>
+        <li><b>中文字形受字体限制。</b>界面用 512 字形的控制台字体，约 415 个汉字；不在子集内的中文 SSID 或路径会显示成方块。</li>
+        <li><b>只维护当前版本。</b>历史版本不再更新，也不在公开仓库里。</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ================= 结尾 CTA ================= -->
+  <section class="band" style="padding-block:clamp(56px,6.4vw,96px)">
+    <div class="wrap">
+      <div style="display:flex;flex-wrap:wrap;gap:28px;align-items:center;justify-content:space-between">
+        <div>
+          <h2 style="font-size:clamp(21px,2.6vw,30px)">插上 U 盘，剩下的交给对面的人。</h2>
+          <p style="margin-top:10px;color:var(--muted);font-size:14px">源码、说明与问题反馈都在公开仓库里；镜像在 123 云盘。</p>
+        </div>
+        <div class="cta-row" style="margin-top:0">
+          <a class="btn btn-primary btn-lg" href="https://1856983545.share.123pan.cn/123pan/2xU0vd-MdZqd?pwd=icUj#" target="_blank" rel="noopener">下载 2.0 镜像</a>
+          <a class="btn btn-lg" href="https://github.com/listenablehfcd/ai-boot-pro" target="_blank" rel="noopener">GitHub 仓库 ↗</a>
+        </div>
+      </div>
+      <p class="legal">
+        <strong>法律声明：</strong>下载、写入或运行本镜像，即表示你确认已获得目标设备的处置授权，并已知悉写盘与远程接入不可撤销的风险。
+        本项目按「现状」提供，不附带任何担保；与 Debian 项目、Microsoft Corporation 均无隶属关系，相关名称与商标归其各自所有者所有。
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <div class="foot-grid">
+      <div class="foot-brand">
+        <a class="brand" href="#top">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7.5l4.5 4.5L5 16.5"/><path d="M13 16.5h6"/></svg>
+          </span>
+          <span class="brand-text"><span class="brand-name">AI Boot Pro</span><span class="brand-sub">v2.0</span></span>
+        </a>
+        <p>把 U 盘插到开不了机的电脑上，让远程的人或 AI 接进来。基于 Debian Live 13，纯文本界面，不依赖显卡驱动。</p>
+      </div>
+
+      <div>
+        <p class="foot-h">项目</p>
+        <nav class="foot-links" aria-label="项目链接">
+          <a href="https://github.com/listenablehfcd/ai-boot-pro" target="_blank" rel="noopener">源码仓库 ↗</a>
+          <a href="https://github.com/listenablehfcd/ai-boot-pro/issues" target="_blank" rel="noopener">问题与建议 ↗</a>
+          <a href="https://github.com/listenablehfcd/ai-boot-pro/blob/main/README.md" target="_blank" rel="noopener">README ↗</a>
+          <a href="https://github.com/listenablehfcd/ai-boot-pro/blob/main/LICENSE" target="_blank" rel="noopener">MIT 许可证 ↗</a>
+        </nav>
+      </div>
+
+      <div>
+        <p class="foot-h">文档</p>
+        <nav class="foot-links" aria-label="文档链接">
+          <a href="https://github.com/listenablehfcd/ai-boot-pro/blob/main/THIRD-PARTY.md" target="_blank" rel="noopener">第三方组件与商标 ↗</a>
+          <a href="https://github.com/listenablehfcd/ai-boot-pro/blob/main/font/README.md" target="_blank" rel="noopener">中文字体子集 ↗</a>
+          <a href="https://github.com/listenablehfcd/ai-boot-pro/blob/main/share/ai-boot.conf.README" target="_blank" rel="noopener">配置文件说明 ↗</a>
+          <a href="https://github.com/listenablehfcd/ai-boot-pro/blob/main/share/AI-README.txt" target="_blank" rel="noopener">AI-README.txt ↗</a>
+        </nav>
+      </div>
+
+      <div class="foot-legal">
+        <p class="foot-h">声明</p>
+        <p>本项目是 Debian Live 的衍生品，与 Debian 项目无隶属关系，亦未获其背书。Windows、Windows PE、Microsoft 是 Microsoft Corporation 的商标；Linux 是 Linus Torvalds 的注册商标。</p>
+        <p>中文字体为 GNU Unifont 的修改版子集，按 GPL v2+ 分发。镜像内 Debian 组件遵循各自许可证。</p>
+      </div>
+    </div>
+
+    <div class="foot-bottom">
+      <span>© 2026 AI Boot Pro · MIT</span>
+      <span>静态页面 · 无追踪 · 无外部请求</span>
+      <span>最后更新 2026-11-01</span>
+    </div>
+  </div>
+</footer>
+
+<button class="to-top" id="to-top" type="button" aria-label="回到顶部">
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="M6 11l6-6 6 6"/></svg>
+</button>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "AI Boot Pro",
+  "alternateName": "AI Boot Pro 救援启动盘",
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "BIOS / UEFI",
+  "softwareVersion": "2.0",
+  "releaseNotes": "https://github.com/listenablehfcd/ai-boot-pro/blob/main/README.md",
+  "url": "https://listenablehfcd.github.io/ai-boot-pro/",
+  "codeRepository": "https://github.com/listenablehfcd/ai-boot-pro",
+  "license": "https://github.com/listenablehfcd/ai-boot-pro/blob/main/LICENSE",
+  "inLanguage": "zh-CN",
+  "description": "基于 Debian Live 13 的救援启动盘：U 盘启动后自动联网、自动开启 SSH，把 IP、端口、账号与密码显示在屏幕上，供远程人员或 AI 登录排障。"
+}
+</script>
+<script src="assets/site.js" defer></script>
+</body>
+</html>
